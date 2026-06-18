@@ -11,46 +11,57 @@ Runs as a persistent foreground service that starts on boot and exposes the Port
 
 ## Installation
 
-### 1. Build or download the APK
+### Recommended: one command (Windows)
 
-Build with Android Studio / Gradle, or grab the latest release APK.
-
-### 2. Install via ADB
-
-```bash
-adb install portal-ha-bridge.apk
-```
-
-### 3. Grant permissions
-
-**Fastest (Windows, device on USB):** run the provisioner — it installs the APK and grants everything, prompting for the two optional adb-only features (screen sleep, presence):
+The provisioner needs nothing pre-installed. With the Portal connected via ADB:
 
 ```powershell
-.\provision.ps1 -Install                # install APK + grant everything
-.\provision.ps1 -Install -SetLauncher   # + set the immortal kiosk launcher
+iwr https://raw.githubusercontent.com/RoadRunner-1024/portal-ha-bridge/main/provision.ps1 -OutFile provision.ps1
+Unblock-File .\provision.ps1
+.\provision.ps1                 # install the app if missing + grant everything
+.\provision.ps1 -SetLauncher    # + set the immortal kiosk launcher
 ```
 
-**Or, no computer needed for most of it:** open the app and tap **Grant Missing Permissions**, then keep tapping until the status box is all ✓. This handles **everything except screen sleep with no adb** — camera and microphone via permission dialogs; brightness and overlay are auto-granted on Portal.
+It downloads `adb` (platform-tools) if it isn't on your PATH, downloads + installs the latest release APK if the app isn't already present, grants every permission/app-op, and enables the screen-control accessibility service. Use `-Install` later to force an update to a newer APK.
 
-**Screen sleep is the one exception.** Meta hides accessibility services from Portal's Settings, so sleep can't be enabled on-device. Run this once from a computer with the Portal connected (the app shows this command with a Copy button when needed):
+### Manual install (any OS with adb)
 
-```bash
-adb shell pm grant com.aeonos.portalha android.permission.WRITE_SECURE_SETTINGS
-```
-
-The app then enables its own accessibility service automatically. **Everything else works without adb** — if you don't need HA-controlled screen sleep, you can skip adb entirely.
-
-**Optional full adb setup** (e.g. provisioning many devices) — grants everything silently:
+Prefer to do it by hand? Install the APK and grant the six ADB-only items yourself — these **cannot** be granted from the Portal UI:
 
 ```bash
+adb install -r portal-ha-bridge.apk
+
 adb shell pm grant com.aeonos.portalha android.permission.WRITE_SECURE_SETTINGS
 adb shell pm grant com.aeonos.portalha android.permission.RECORD_AUDIO
 adb shell pm grant com.aeonos.portalha android.permission.CAMERA
+adb shell pm grant com.aeonos.portalha android.permission.READ_LOGS
 adb shell appops set com.aeonos.portalha WRITE_SETTINGS allow
 adb shell appops set com.aeonos.portalha SYSTEM_ALERT_WINDOW allow
+
+# restart so the app enables its own accessibility service
+adb shell am force-stop com.aeonos.portalha
+adb shell am start -n com.aeonos.portalha/.DashboardActivity
 ```
 
-### 4. Configure via the app
+| Permission / app-op | Enables |
+|---|---|
+| `WRITE_SECURE_SETTINGS` | auto-enabling the screen-sleep accessibility service |
+| `RECORD_AUDIO` | ambient sound-level sensor |
+| `CAMERA` | camera streaming / motion |
+| `READ_LOGS` | Portal presence sensor (logcat tail) |
+| `WRITE_SETTINGS` | read/set screen brightness |
+| `SYSTEM_ALERT_WINDOW` | overlay → background camera access |
+
+### No computer at all?
+
+Open the app and tap **Grant Missing Permissions**, then keep tapping until the status box is all ✓ — the app's own dialogs cover camera, microphone, brightness, and overlay. **Two features still need a one-time ADB grant**, because Portal blocks them from the UI:
+
+- **Screen sleep** — `WRITE_SECURE_SETTINGS` (Meta hides accessibility services from Settings)
+- **Portal presence** — `READ_LOGS`
+
+The app shows the exact `adb` command (with a Copy button) when either is needed. Everything else works without adb — skip those two grants and you simply go without HA-controlled screen sleep and the presence sensor.
+
+### Configure via the app
 
 Open **Portal HA Bridge** on the Portal and fill in:
 
@@ -63,7 +74,7 @@ Open **Portal HA Bridge** on the Portal and fill in:
 
 Tap **Save & Restart Service**.
 
-### 5. Home Assistant
+### Home Assistant
 
 The app publishes MQTT auto-discovery — the entity appears automatically in HA under the device name you set.
 

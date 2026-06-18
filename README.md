@@ -45,29 +45,30 @@ Meta Portal family on **Android 9 (API 28)** and **Android 10 (API 29)** — Por
 
 ## Quick start
 
-### 1. Build or grab the APK
-- **Download:** grab `portal-ha-bridge.apk` from the [latest release](https://github.com/RoadRunner-1024/portal-ha-bridge/releases/latest).
-- **Build from source:** see [Building](#building-from-source) — the signed APK is written to `app/build/outputs/apk/release/app-release.apk`.
-
-### 2. Install + provision (Windows, device on ADB)
-With the Portal connected via ADB, from the project root:
+### 1. Install + provision (Windows)
+Download the provisioner and run it with the Portal connected via ADB:
 
 ```powershell
-.\provision.ps1 -Install -SetLauncher
+iwr https://raw.githubusercontent.com/RoadRunner-1024/portal-ha-bridge/main/provision.ps1 -OutFile provision.ps1
+Unblock-File .\provision.ps1
+.\provision.ps1
 ```
 
-This installs the APK, grants every permission/app-op (all require ADB — they can't be granted from the Portal UI), auto-enables the screen-control accessibility service, optionally sets the [immortal launcher](https://github.com/…) as the kiosk home, restarts the app, and prints a green verification checklist.
+That one command does everything — **nothing needs to be pre-installed**. It downloads Google's platform-tools if `adb` isn't on your PATH, downloads and installs the latest release APK if the app isn't already on the device, grants every permission/app-op (all require ADB — they can't be granted from the Portal UI), auto-enables the screen-control accessibility service, and prints a green verification checklist.
 
 | Flag | Effect |
 |---|---|
-| *(none)* | grant permissions on the connected device |
-| `-Install` | install the latest APK first |
-| `-SetLauncher` | also set immortal as the default launcher |
+| *(none)* | install the app if it's missing, then grant everything |
+| `-Install` | force a reinstall / update to the latest APK |
+| `-Apk <path>` | install a specific APK instead of downloading |
+| `-SetLauncher` | also set the immortal launcher as the kiosk home |
 | `-Serial <id>` | target a specific device when several are attached |
 
-> No computer? You can install the APK and grant **most** things via the app's permission prompts — but **screen sleep needs one ADB grant** (`WRITE_SECURE_SETTINGS`), because Meta hides accessibility services from Portal's Settings. See [SETUP.md](SETUP.md).
+> Prefer to build it yourself? See [Building from source](#building-from-source) — `provision.ps1` automatically uses your build output if it finds one.
+>
+> No computer at all? You can install the APK and grant **most** things via the app's own permission prompts — but **screen sleep and Portal presence each need a one-time ADB grant** (`WRITE_SECURE_SETTINGS` and `READ_LOGS`), because Portal blocks them from its UI. See [SETUP.md](SETUP.md).
 
-### 3. Configure
+### 2. Configure
 Open **Portal HA Bridge** on the device and enter your **MQTT broker** host/port/credentials and a **device name** (this becomes the HA device + entity prefix). Save & restart.
 
 The HA device appears automatically.
