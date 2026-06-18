@@ -46,7 +46,8 @@ Meta Portal family on **Android 9 (API 28)** and **Android 10 (API 29)** — Por
 ## Quick start
 
 ### 1. Build or grab the APK
-Build from source (see [Building](#building-from-source)) or download from Releases. The release APK is at `app/build/outputs/apk/release/app-release.apk`.
+- **Download:** grab `portal-ha-bridge.apk` from the [latest release](https://github.com/RoadRunner-1024/portal-ha-bridge/releases/latest).
+- **Build from source:** see [Building](#building-from-source) — the signed APK is written to `app/build/outputs/apk/release/app-release.apk`.
 
 ### 2. Install + provision (Windows, device on ADB)
 With the Portal connected via ADB, from the project root:
