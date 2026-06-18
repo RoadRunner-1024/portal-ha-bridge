@@ -6,21 +6,23 @@
   optionally installs the latest APK, and optionally sets the immortal launcher
   as the default home.
 
-  Needs nothing pre-installed: if adb isn't on your PATH, this downloads
-  Google's platform-tools automatically (into a platform-tools\ folder next
-  to this script) and uses that.
+  Needs nothing pre-installed. This single file is enough:
+      1. download provision.ps1
+      2. .\provision.ps1 -Install
+  If adb isn't on your PATH it downloads Google's platform-tools, and with
+  -Install it downloads the latest release APK too - both automatically.
 
   USAGE (device connected via adb):
       .\provision.ps1                 # just grant permissions on the connected device
-      .\provision.ps1 -Install        # install the APK first, then provision
+      .\provision.ps1 -Install        # download (if needed) + install the APK, then provision
       .\provision.ps1 -Install -Apk C:\path\portal-ha-bridge.apk   # install a specific APK
       .\provision.ps1 -Serial 821..   # target a specific device (use when several are connected)
       .\provision.ps1 -SetLauncher    # also set immortal as the default home launcher
 
   With -Install the APK is resolved from, in order: -Apk; the build output
-  (app\build\outputs\apk\release\app-release.apk); or a portal-ha-bridge.apk /
-  app-release.apk sitting next to this script (e.g. one downloaded from the
-  GitHub release). The source ZIP does NOT contain a prebuilt APK.
+  (app\build\outputs\apk\release\app-release.apk); a portal-ha-bridge.apk /
+  app-release.apk sitting next to this script; otherwise the latest GitHub
+  release APK is downloaded automatically.
 #>
 param(
     [string]$Serial,
@@ -86,11 +88,20 @@ if ($Install) {
     $candidates += (Join-Path $PSScriptRoot "app-release.apk")
     $apk = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $apk) {
-        Write-Host "No APK found to install. Either:" -ForegroundColor Red
-        Write-Host "  - download portal-ha-bridge.apk from the GitHub release and put it next to this script," -ForegroundColor Red
-        Write-Host "  - pass -Apk <path-to-apk>, or" -ForegroundColor Red
-        Write-Host "  - build from source first (gradle assembleRelease)." -ForegroundColor Red
-        exit 1
+        # Nothing local - download the latest release APK so a single file
+        # (this script) + a single command is all that's needed.
+        $apk = Join-Path $PSScriptRoot "portal-ha-bridge.apk"
+        Write-Host "No local APK found - downloading the latest release APK..." -ForegroundColor Yellow
+        $rel = "https://github.com/RoadRunner-1024/portal-ha-bridge/releases/latest/download/portal-ha-bridge.apk"
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $rel -OutFile $apk -UseBasicParsing
+            Write-Host "  downloaded $apk" -ForegroundColor Green
+        } catch {
+            Write-Host "Could not download the release APK: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Pass -Apk <path-to-apk> or build from source (gradle assembleRelease) instead." -ForegroundColor Red
+            exit 1
+        }
     }
     Write-Host "Installing $apk ..." -ForegroundColor Cyan
     Adb install -r -t $apk
