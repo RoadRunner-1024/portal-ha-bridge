@@ -6,14 +6,21 @@
   optionally installs the latest APK, and optionally sets the immortal launcher
   as the default home.
 
-  USAGE (from the project root, device connected via adb):
-      .\provision.ps1                 # provision the only connected device
-      .\provision.ps1 -Install        # install the latest release APK first, then provision
+  USAGE (device connected via adb):
+      .\provision.ps1                 # just grant permissions on the connected device
+      .\provision.ps1 -Install        # install the APK first, then provision
+      .\provision.ps1 -Install -Apk C:\path\portal-ha-bridge.apk   # install a specific APK
       .\provision.ps1 -Serial 821..   # target a specific device (use when several are connected)
       .\provision.ps1 -SetLauncher    # also set immortal as the default home launcher
+
+  With -Install the APK is resolved from, in order: -Apk; the build output
+  (app\build\outputs\apk\release\app-release.apk); or a portal-ha-bridge.apk /
+  app-release.apk sitting next to this script (e.g. one downloaded from the
+  GitHub release). The source ZIP does NOT contain a prebuilt APK.
 #>
 param(
     [string]$Serial,
+    [string]$Apk,
     [switch]$Install,
     [switch]$SetLauncher
 )
@@ -24,7 +31,6 @@ param(
 # the whole script. We check $LASTEXITCODE explicitly where it matters instead.
 $ErrorActionPreference = "Continue"
 $pkg = "com.aeonos.portalha"
-$apk = Join-Path $PSScriptRoot "app\build\outputs\apk\release\app-release.apk"
 
 # Prefer adb on PATH; otherwise look for a platform-tools folder next to this script.
 $adb = if (Get-Command adb -ErrorAction SilentlyContinue) {
@@ -48,7 +54,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if ($Install) {
-    if (-not (Test-Path $apk)) { throw "APK not found: $apk (build it first: gradle assembleRelease)" }
+    # Resolve the APK: explicit -Apk, then the build output, then a downloaded
+    # APK dropped next to this script.
+    $candidates = @()
+    if ($Apk) { $candidates += $Apk }
+    $candidates += (Join-Path $PSScriptRoot "app\build\outputs\apk\release\app-release.apk")
+    $candidates += (Join-Path $PSScriptRoot "portal-ha-bridge.apk")
+    $candidates += (Join-Path $PSScriptRoot "app-release.apk")
+    $apk = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $apk) {
+        Write-Host "No APK found to install. Either:" -ForegroundColor Red
+        Write-Host "  - download portal-ha-bridge.apk from the GitHub release and put it next to this script," -ForegroundColor Red
+        Write-Host "  - pass -Apk <path-to-apk>, or" -ForegroundColor Red
+        Write-Host "  - build from source first (gradle assembleRelease)." -ForegroundColor Red
+        exit 1
+    }
     Write-Host "Installing $apk ..." -ForegroundColor Cyan
     Adb install -r -t $apk
 }
