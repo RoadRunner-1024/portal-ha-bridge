@@ -18,12 +18,23 @@ param(
     [switch]$SetLauncher
 )
 
-$ErrorActionPreference = "Stop"
+# NOTE: deliberately NOT "Stop". adb writes harmless first-run chatter to
+# stderr ("* daemon not running; starting now ..."), and under -Stop PowerShell
+# 5.1 turns any native-command stderr line into a terminating error and aborts
+# the whole script. We check $LASTEXITCODE explicitly where it matters instead.
+$ErrorActionPreference = "Continue"
 $pkg = "com.aeonos.portalha"
 $apk = Join-Path $PSScriptRoot "app\build\outputs\apk\release\app-release.apk"
 
-# Prefer adb on PATH; fall back to the bundled platform-tools location.
-$adb = if (Get-Command adb -ErrorAction SilentlyContinue) { "adb" } else { "F:\claude\platform-tools\adb.exe" }
+# Prefer adb on PATH; otherwise look for a platform-tools folder next to this script.
+$adb = if (Get-Command adb -ErrorAction SilentlyContinue) {
+    "adb"
+} elseif (Test-Path (Join-Path $PSScriptRoot "platform-tools\adb.exe")) {
+    Join-Path $PSScriptRoot "platform-tools\adb.exe"
+} else {
+    Write-Host "adb not found. Install Android platform-tools and add adb to your PATH, then re-run." -ForegroundColor Red
+    exit 1
+}
 
 # Build the device-target prefix (-s SERIAL) when a serial is given.
 $target = @(); if ($Serial) { $target = @("-s", $Serial) }
