@@ -64,6 +64,25 @@ That one command does everything — **nothing needs to be pre-installed**. It d
 | `-SetLauncher` | also set the immortal launcher as the kiosk home |
 | `-Serial <id>` | target a specific device when several are attached |
 
+### 1. Install + provision (macOS / Linux)
+Download the provisioner and run it with the Portal connected via ADB:
+
+```bash
+curl -O https://raw.githubusercontent.com/RoadRunner-1024/portal-ha-bridge/main/provision.sh
+chmod +x provision.sh
+./provision.sh
+```
+
+Same behaviour as the Windows script — downloads platform-tools automatically if `adb` isn't found, fetches the latest release APK if the app isn't on the device, grants all permissions, and prints a verification checklist.
+
+| Flag | Effect |
+|---|---|
+| *(none)* | install the app if it's missing, then grant everything |
+| `--install` | force a reinstall / update to the latest APK |
+| `--apk <path>` | install a specific APK instead of downloading |
+| `--set-launcher` | also set the immortal launcher as the kiosk home |
+| `--serial <id>` | target a specific device when several are attached |
+
 > Prefer to build it yourself? See [Building from source](#building-from-source) — `provision.ps1` automatically uses your build output if it finds one.
 >
 > No computer at all? You can install the APK and grant **most** things via the app's own permission prompts — but **screen sleep and Portal presence each need a one-time ADB grant** (`WRITE_SECURE_SETTINGS` and `READ_LOGS`), because Portal blocks them from its UI. See [SETUP.md](SETUP.md).
@@ -184,7 +203,8 @@ app/src/main/java/com/aeonos/portalha/
   DashboardActivity.kt  Full-screen HA WebView (kiosk)
   MainActivity.kt       Settings / configuration UI
   Prefs.kt              SharedPreferences wrapper
-provision.ps1           One-shot device setup (install + permissions + launcher)
+provision.ps1           One-shot device setup (install + permissions + launcher) — Windows
+provision.sh            One-shot device setup (install + permissions + launcher) — macOS / Linux
 SETUP.md                Detailed setup & MQTT topics
 ```
 
@@ -193,7 +213,7 @@ SETUP.md                Detailed setup & MQTT topics
 ## Troubleshooting
 
 - **Camera "1 frame then freezes" in HA** → use the `ffmpeg:…#video=copy` URL (drops the AAC track); ensure the app is recent (Constrained Baseline profile).
-- **No screen sleep** → `WRITE_SECURE_SETTINGS` not granted; run `provision.ps1` (or the single grant in SETUP.md).
+- **No screen sleep** → `WRITE_SECURE_SETTINGS` not granted; run `provision.ps1` / `provision.sh` (or the single grant in SETUP.md).
 - **Camera "can't open from background"** → re-open the dashboard app (it re-acquires the camera in the foreground).
 - **Provision says "no device"** → check `adb devices`, re-plug, accept the USB-debugging prompt.
 
