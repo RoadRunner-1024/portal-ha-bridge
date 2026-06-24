@@ -29,6 +29,19 @@ class DashboardActivity : AppCompatActivity() {
         // asserting HOME over us). HA's Screen switch can still sleep it —
         // this only blocks the timeout path, like a playing video does.
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Show on top of keyguard/lock screen and turn screen on when requested
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+
         enableImmersive()   // kiosk: hide the system nav/status bars
 
         drawer = findViewById(R.id.drawer_layout)
@@ -130,6 +143,16 @@ class DashboardActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         enableImmersive()
+
+        // Dismiss the keyguard/lock screen so the dashboard is immediately interactive
+        val km = getSystemService(android.app.KeyguardManager::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            km.requestDismissKeyguard(this, null)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
+        }
+
         // Re-acquire the camera if another app (e.g. the Portal launcher) took
         // it while we were in the background.
         BridgeService.ensureCamera(this)
