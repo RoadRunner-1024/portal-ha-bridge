@@ -5,7 +5,7 @@ Turn a **Meta Portal** into a fully-fledged **Home Assistant** device — screen
 It runs as a persistent background service plus an optional full-screen HA dashboard (kiosk). Nothing is sent anywhere except your own MQTT broker and Home Assistant.
 
 > Unofficial, third-party project. Not affiliated with or endorsed by Meta.
-
+<a href="https://www.buymeacoffee.com/roadrunner1024" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 ---
 
 ## What you get in Home Assistant
