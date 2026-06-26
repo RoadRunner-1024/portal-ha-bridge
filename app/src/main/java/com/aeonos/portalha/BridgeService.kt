@@ -41,6 +41,37 @@ class BridgeService : Service() {
         private const val EXTRA_ROTATION = "rotation"
         private const val ACTION_ENSURE_CAMERA = "com.aeonos.portalha.ENSURE_CAMERA"
         private const val ACTION_APPLY_DISPLAY = "com.aeonos.portalha.APPLY_DISPLAY"
+        private const val ACTION_APPLY_INTERCOM = "com.aeonos.portalha.APPLY_INTERCOM"
+
+        // Live reference to the running service so the dashboard UI + the PTT
+        // overlay can query peers and drive the intercom directly (low latency,
+        // no intent round-trip). Cleared on destroy.
+        @Volatile private var instance: BridgeService? = null
+
+        fun intercomPeers(): List<Intercom.Peer> = instance?.intercom?.onlinePeers() ?: emptyList()
+        fun intercomBusyName(): String? = instance?.intercom?.busySpeakerName()
+        fun intercomTalking(): Boolean = instance?.intercom?.isTalking() == true
+        // Whether this Portal can SEND announcements (false when Alexa holds the mic).
+        fun intercomCanTransmit(): Boolean = instance?.intercom?.canTransmit() ?: true
+        // Returns true if talking actually started (false = busy / no mic / not ready).
+        fun intercomStartTalk(target: String?): Boolean = instance?.intercom?.startTalk(target) == true
+        fun intercomStopTalk() { instance?.intercom?.stopTalk() }
+
+        // Re-evaluate the PTT overlays after a pref/config change.
+        fun applyIntercomOverlay(context: Context) =
+            context.startForegroundService(Intent(context, BridgeService::class.java)
+                .setAction(ACTION_APPLY_INTERCOM))
+
+        // Repaint the floating buttons live (e.g. the transparency slider moved).
+        fun intercomOverlayRefresh() { instance?.intercomOverlays?.forEach { it.refresh() } }
+
+        // The dashboard drives overlay visibility — the floating buttons show only
+        // while the Portal HA Bridge dashboard is in front, not over other apps.
+        @Volatile private var dashboardForeground = false
+        fun setDashboardForeground(fg: Boolean) {
+            dashboardForeground = fg
+            instance?.reconcileIntercomOverlays()
+        }
 
         fun start(context: Context) =
             context.startForegroundService(Intent(context, BridgeService::class.java))
@@ -95,6 +126,10 @@ class BridgeService : Service() {
     private var audioReceiver: BroadcastReceiver? = null
     private var sensorBridge: SensorBridge? = null
     private var soundMonitor: SoundMonitor? = null
+
+    // Portal-to-Portal intercom (audio-only push-to-announce) + optional overlays.
+    private var intercom: Intercom? = null
+    private val intercomOverlays = mutableListOf<IntercomOverlay>()
     @Volatile private var lastVolumePercent = -1
     @Volatile private var lastVolumeMuted = false
     @Volatile private var lastBrightnessPercent = -1
@@ -180,7 +215,18 @@ class BridgeService : Service() {
         sensorBridge = SensorBridge(this, ::publishRaw).also { it.start(p) }
         soundMonitor = SoundMonitor(this) { level ->
             prefs?.let { publishRaw(HaDiscovery.soundStateTopic(it.deviceId), level.toString(), 0) }
-        }.also { it.start() }
+        }
+        intercom = Intercom(this, p.deviceId, { prefs?.deviceName ?: "Portal" }, { localIp() }, ::publishBytes)
+            .also { it.attachSoundMonitor(soundMonitor) }
+        instance = this
+
+        // Measure mic capability first (it owns the mic briefly), then start the
+        // sound sensor + the PTT overlay once we know whether this Portal can send.
+        intercom?.probeTransmitCapability()   // ~1.1s, owns the mic while measuring
+        Handler(Looper.getMainLooper()).postDelayed({
+            soundMonitor?.start()
+            reconcileIntercomOverlays()
+        }, 1_500L)
 
         if (p.cameraServiceEnabled) {
             // Overlay keeps the process "visible" so Camera 0 opens from the
@@ -263,6 +309,11 @@ class BridgeService : Service() {
                 }.onFailure { Log.w(TAG, "ensureCamera failed: ${it.message}") }
             }
         }
+        if (intent?.action == ACTION_APPLY_INTERCOM) {
+            prefs ?: Prefs(this).also { prefs = it }
+            hideIntercomOverlays()          // rebuild from the (possibly edited) config
+            reconcileIntercomOverlays()
+        }
         if (intent?.action == ACTION_APPLY_DISPLAY) {
             val p = prefs ?: Prefs(this).also { prefs = it }
             commandExecutor.submit {
@@ -289,6 +340,9 @@ class BridgeService : Service() {
         audioReceiver?.let { unregisterReceiver(it) }
         sensorBridge?.stop()
         soundMonitor?.stop()
+        intercom?.release()
+        hideIntercomOverlays()
+        instance = null
         cameraStream?.release()
         rtspStreamer?.stop()
         runCatching { orientationListener.disable() }
@@ -408,6 +462,10 @@ class BridgeService : Service() {
         client.setCallback(object : MqttCallback {
             override fun connectionLost(cause: Throwable?) { Log.w(TAG, "Connection lost: ${cause?.message}"); mqtt = null }
             override fun messageArrived(topic: String, msg: MqttMessage) {
+                // Intercom traffic is binary (PCM audio) and must NOT be string-
+                // decoded or run on the command executor — route it straight to
+                // the manager from the raw bytes. handleRawMessage is non-blocking.
+                if (intercom?.handleRawMessage(topic, msg.payload) == true) return
                 val payload = msg.toString().trim()
                 Log.i(TAG, "messageArrived: topic=$topic payload=$payload")
                 runCatching {
@@ -456,6 +514,10 @@ class BridgeService : Service() {
             if (sensorBridge?.hasTemperature == true) HaDiscovery.tempOffsetCommandTopic(p.deviceId) else null
         ).forEach { client.subscribe(it, 1) }
 
+        // Intercom: subscribe to presence/lock/audio and announce ourselves.
+        intercom?.subscriptions()?.forEach { (topic, qos) -> client.subscribe(topic, qos) }
+        intercom?.publishPresence()
+
         // Clear stale retained entities from old builds
         HaDiscovery.staleTopics(p.deviceId).forEach { topic -> client.publish(topic, emptyRetained()) }
 
@@ -494,6 +556,7 @@ class BridgeService : Service() {
                 pollChangedStates(p)
             }
         } finally {
+            runCatching { intercom?.clearPresence() }   // retract our retained presence
             mqtt = null
             runCatching { client.disconnect(0) }
         }
@@ -1019,6 +1082,53 @@ class BridgeService : Service() {
         runCatching {
             mqtt?.publish(topic, MqttMessage(payload.toByteArray()).also { it.qos = qos; it.isRetained = retained })
         }
+    }
+
+    // Binary publish for the intercom (raw PCM frames, presence, lock). Never
+    // called from the Paho callback thread — only the capture + MQTT threads.
+    private fun publishBytes(topic: String, payload: ByteArray, qos: Int, retained: Boolean) {
+        runCatching {
+            mqtt?.publish(topic, MqttMessage(payload).also { it.qos = qos; it.isRetained = retained })
+        }
+    }
+
+    // ── Intercom PTT overlays (named floating buttons) ────────────────────────
+
+    // Show the configured talk buttons only while: the feature is on, this Portal
+    // can transmit (not receive-only), AND the dashboard is in front. Otherwise
+    // hide them — they don't float over other apps / the home screen.
+    private fun reconcileIntercomOverlays() {
+        val p = prefs ?: return
+        val show = p.intercomOverlayEnabled && intercom?.canTransmit() == true && dashboardForeground
+        if (!show) { hideIntercomOverlays(); return }
+        if (intercomOverlays.isNotEmpty()) return   // already up
+
+        // Seed a single default "Talk → Everyone" button if none configured yet.
+        val buttons = p.getIntercomButtons().ifEmpty {
+            mutableListOf(IntercomButton("Talk", "all")).also { p.setIntercomButtons(it) }
+        }
+        buttons.forEachIndexed { i, b ->
+            IntercomOverlay(
+                this, b.name, b.x, b.y, i,
+                onDown = { intercom?.startTalk(b.target) == true },
+                onUp = { intercom?.stopTalk() },
+                onMoved = { x, y -> saveIntercomButtonPosition(i, x, y) }
+            ).also { intercomOverlays.add(it); it.show() }
+        }
+    }
+
+    private fun saveIntercomButtonPosition(index: Int, x: Int, y: Int) {
+        val p = prefs ?: return
+        val list = p.getIntercomButtons()
+        if (index in list.indices) {
+            list[index] = list[index].copy(x = x, y = y)
+            p.setIntercomButtons(list)
+        }
+    }
+
+    private fun hideIntercomOverlays() {
+        intercomOverlays.forEach { it.hide() }
+        intercomOverlays.clear()
     }
 
     private fun retained(payload: String) =

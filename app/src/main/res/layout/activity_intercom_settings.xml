@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/btn_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="←  Back"
+                android:backgroundTint="#37474F" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Intercom"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="@color/onSurface"
+                android:layout_marginStart="16dp" />
+        </LinearLayout>
+
+        <Switch
+            android:id="@+id/sw_show_buttons"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Show floating talk buttons"
+            android:textSize="16sp"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Floating push-to-talk buttons on the dashboard (not over other apps). The drawer always has a Hold to Announce button too."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="How to use a button on the dashboard:\n• HOLD it to talk; release to stop.\n• DOUBLE-TAP it to move — it turns solid blue, then drag it anywhere. Let go and it locks back into place."
+            android:textSize="12sp"
+            android:textColor="@color/onSurface"
+            android:background="@color/surface"
+            android:padding="10dp"
+            android:lineSpacingExtra="3dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tv_intercom_note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:textColor="@color/hint"
+            android:background="@color/surface"
+            android:padding="10dp"
+            android:layout_marginBottom="16dp" />
+
+        <Button
+            android:id="@+id/btn_configure_buttons"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Configure Talk Buttons"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Sound -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Sound"
+            android:textSize="14sp"
+            android:textColor="@color/colorAccent"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tv_intercom_volume"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Announcement volume"
+            android:textSize="13sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_intercom_volume"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Button appearance -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Button appearance"
+            android:textSize="14sp"
+            android:textColor="@color/colorAccent"
+            android:layout_marginBottom="12dp" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="80dp"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:id="@+id/preview_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="Talk"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="14dp" />
+        </FrameLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Background colour"
+            android:textSize="13sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_intercom_color"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="360"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Saturation  (grey ← → colour)"
+            android:textSize="13sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_bg_sat"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Brightness  (dark ← → light)"
+            android:textSize="13sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_bg_val"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tv_intercom_opacity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Opacity"
+            android:textSize="13sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_intercom_opacity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_transparent_bg"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Transparent background (label only)"
+            android:textSize="15sp"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="8dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Text colour"
+            android:textSize="13sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_text_hue"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="360"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Text shade  (black ← → white)"
+            android:textSize="13sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_text_shade"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:layout_marginBottom="20dp" />
+
+    </LinearLayout>
+</ScrollView>

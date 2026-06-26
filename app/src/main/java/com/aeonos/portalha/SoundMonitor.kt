@@ -28,6 +28,12 @@ class SoundMonitor(
 
     private val running = AtomicBoolean(false)
 
+    // When set (the intercom is announcing), every captured PCM chunk is handed
+    // here too, so the announce streams this SAME continuously-warm mic — no
+    // release/reacquire handoff, no cold-start warmup, no ~1s latency. The callback
+    // runs on the capture thread and must return promptly (pack + publish a frame).
+    @Volatile var frameSink: ((buf: ShortArray, length: Int) -> Unit)? = null
+
     fun start() {
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
@@ -44,7 +50,13 @@ class SoundMonitor(
 
         Thread({
             val am = context.getSystemService(AudioManager::class.java)
-            val buf = ShortArray(bufSize / 2)
+            // Read in SMALL chunks (~40 ms) so the loop revisits the paused flag
+            // frequently and can hand the mic to the intercom within ~40 ms. A big
+            // read blocks the loop for its whole duration, which on a contended
+            // Portal mic delayed the handoff by up to 2 s — long enough to swallow
+            // an entire announce. RMS accumulates across reads, so chunk size only
+            // affects responsiveness, not the published level.
+            val buf = ShortArray(SAMPLE_RATE / 25)   // 640 samples = 40 ms
             var rec: AudioRecord? = null
             var sumSq = 0.0
             var count = 0
@@ -88,6 +100,7 @@ class SoundMonitor(
 
                 val n = rec?.read(buf, 0, buf.size) ?: -1
                 if (n > 0) {
+                    frameSink?.invoke(buf, n)   // forward to the intercom if announcing
                     for (i in 0 until n) sumSq += buf[i].toLong() * buf[i]
                     count += n
                     val now = System.currentTimeMillis()

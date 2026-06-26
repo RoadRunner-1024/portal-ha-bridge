@@ -45,6 +45,44 @@
             android:text="Reload"
             android:backgroundTint="#3A3A5C" />
 
+        <!-- Intercom -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#33FFFFFF"
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="20dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Intercom"
+            android:textColor="#AAB0FF"
+            android:textSize="13sp"
+            android:layout_marginBottom="8dp" />
+
+        <Spinner
+            android:id="@+id/spinner_target"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp" />
+
+        <Button
+            android:id="@+id/btn_announce"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:text="Hold to Announce"
+            android:textStyle="bold"
+            android:backgroundTint="#3949AB" />
+
+        <TextView
+            android:id="@+id/tv_intercom_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#888FAA"
+            android:textSize="11sp"
+            android:layout_marginTop="8dp" />
+
     </LinearLayout>
 
 </androidx.drawerlayout.widget.DrawerLayout>

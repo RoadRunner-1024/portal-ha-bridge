@@ -8,13 +8,26 @@ import android.webkit.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.GravityCompat
 import androidx.drawerlayout.widget.DrawerLayout
+import android.view.MotionEvent
+import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.Spinner
+import android.widget.TextView
+import android.widget.Toast
 
 class DashboardActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var drawer: DrawerLayout
     private lateinit var prefs: Prefs
+
+    // Intercom drawer controls. peerIds is kept aligned with the spinner rows;
+    // index 0 is "Everyone" (broadcast → null target), the rest are peer ids.
+    private lateinit var spinnerTarget: Spinner
+    private lateinit var tvIntercomStatus: TextView
+    private lateinit var btnAnnounce: Button
+    private var peerIds: List<String?> = listOf(null)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -95,6 +108,8 @@ class DashboardActivity : AppCompatActivity() {
             loadDashboard()
         }
 
+        setupIntercom()
+
         loadDashboard()
 
         // First run (nothing configured yet): drop straight into Settings rather
@@ -127,9 +142,17 @@ class DashboardActivity : AppCompatActivity() {
         if (hasFocus) enableImmersive()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Hide the floating talk buttons when the dashboard isn't in front.
+        BridgeService.setDashboardForeground(false)
+    }
+
     override fun onResume() {
         super.onResume()
         enableImmersive()
+        // Floating talk buttons are shown only while the dashboard is in front.
+        BridgeService.setDashboardForeground(true)
         // Re-acquire the camera if another app (e.g. the Portal launcher) took
         // it while we were in the background.
         BridgeService.ensureCamera(this)
@@ -138,6 +161,81 @@ class DashboardActivity : AppCompatActivity() {
         val current = webView.url ?: ""
         if (url.isNotEmpty() && !current.startsWith(normalise(url).trimEnd('/'))) {
             loadDashboard()
+        }
+    }
+
+    // ── Intercom (push-to-announce) ───────────────────────────────────────────
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupIntercom() {
+        spinnerTarget = findViewById(R.id.spinner_target)
+        tvIntercomStatus = findViewById(R.id.tv_intercom_status)
+        btnAnnounce = findViewById(R.id.btn_announce)
+        val btn = btnAnnounce
+
+        refreshIntercom()
+
+        // Hold to talk: press streams the mic, release stops.
+        btn.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val target = peerIds.getOrNull(spinnerTarget.selectedItemPosition)
+                    if (BridgeService.intercomStartTalk(target)) {
+                        (v as Button).text = "● Broadcasting…"
+                        v.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFE53935.toInt())
+                    } else {
+                        val busy = BridgeService.intercomBusyName()
+                        Toast.makeText(this,
+                            busy?.let { "Busy — $it is speaking" } ?: "Can't announce (mic unavailable)",
+                            Toast.LENGTH_SHORT).show()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    BridgeService.intercomStopTalk()
+                    (v as Button).text = "Hold to Announce"
+                    v.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF3949AB.toInt())
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // Refresh the online-Portal list each time the drawer is opened.
+        drawer.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
+            override fun onDrawerOpened(drawerView: View) { refreshIntercom() }
+        })
+    }
+
+    private fun refreshIntercom() {
+        val canTx = BridgeService.intercomCanTransmit()
+        val peers = BridgeService.intercomPeers()
+        val labels = ArrayList<String>().apply {
+            add("Everyone"); peers.forEach { add(it.name) }
+        }
+        peerIds = ArrayList<String?>().apply { add(null); peers.forEach { add(it.id) } }
+
+        val prev = spinnerTarget.selectedItemPosition
+        spinnerTarget.adapter = ArrayAdapter(this, R.layout.spinner_item_light, labels).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        if (prev in labels.indices) spinnerTarget.setSelection(prev)
+
+        // Receive-only Portals (system holds the mic) can't send — disable the
+        // controls and explain, but still show who's online (they can hear).
+        btnAnnounce.isEnabled = canTx
+        btnAnnounce.alpha = if (canTx) 1f else 0.5f
+        btnAnnounce.text = if (canTx) "Hold to Announce" else "Receive-only"
+        spinnerTarget.isEnabled = canTx
+        spinnerTarget.alpha = if (canTx) 1f else 0.5f
+
+        val busy = BridgeService.intercomBusyName()
+        tvIntercomStatus.text = when {
+            !canTx -> "Receive-only on this Portal — the microphone is reserved by the system. " +
+                "You'll still hear announcements from other Portals."
+            busy != null -> "$busy is speaking…"
+            peers.isEmpty() -> "No other Portals online yet."
+            else -> "${peers.size} Portal${if (peers.size == 1) "" else "s"} online."
         }
     }
 

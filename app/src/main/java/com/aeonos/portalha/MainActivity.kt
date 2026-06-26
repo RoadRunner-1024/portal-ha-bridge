@@ -78,6 +78,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, DisplaySettingsActivity::class.java))
         }
 
+        findViewById<Button>(R.id.btn_intercom_settings).setOnClickListener {
+            startActivity(Intent(this, IntercomSettingsActivity::class.java))
+        }
+
         // Other buttons
         findViewById<Button>(R.id.btn_save).setOnClickListener {
             prefs.brokerHost = etHost.text.toString().trim().ifEmpty { "homeassistant.local" }

@@ -3,6 +3,18 @@ package com.aeonos.portalha
 import android.content.Context
 import android.content.SharedPreferences
 import android.provider.Settings
+import org.json.JSONArray
+import org.json.JSONObject
+
+// One floating push-to-talk button: a name and the target it announces to
+// ("all" = everyone, otherwise a peer device id), plus its saved screen position
+// (-1 = use a default slot).
+data class IntercomButton(
+    val name: String,
+    val target: String,
+    val x: Int = -1,
+    val y: Int = -1
+)
 
 class Prefs(private val context: Context) {
     private val sp = context.getSharedPreferences("portal_ha", Context.MODE_PRIVATE)
@@ -123,6 +135,80 @@ class Prefs(private val context: Context) {
     var haUrl: String
         get() = sp.getString("ha_url", "") ?: ""
         set(v) = sp.edit().putString("ha_url", v).apply()
+
+    // Portal-to-Portal intercom: show a floating push-to-talk button over the
+    // dashboard (optional — the drawer always has a hold-to-announce button).
+    var intercomOverlayEnabled: Boolean
+        get() = sp.getBoolean("intercom_overlay_enabled", false)
+        set(v) = sp.edit().putBoolean("intercom_overlay_enabled", v).apply()
+
+    // The configured floating talk buttons. Empty list + overlay enabled → a single
+    // default "Talk → Everyone" button is shown (and seeded on first move/config).
+    fun getIntercomButtons(): MutableList<IntercomButton> {
+        val raw = sp.getString("intercom_buttons", "") ?: ""
+        if (raw.isBlank()) return mutableListOf()
+        return runCatching {
+            val arr = JSONArray(raw)
+            MutableList(arr.length()) { i ->
+                val o = arr.getJSONObject(i)
+                IntercomButton(
+                    o.optString("name", "Talk"),
+                    o.optString("target", "all"),
+                    o.optInt("x", -1),
+                    o.optInt("y", -1)
+                )
+            }
+        }.getOrDefault(mutableListOf())
+    }
+
+    fun setIntercomButtons(list: List<IntercomButton>) {
+        val arr = JSONArray()
+        list.forEach { b ->
+            arr.put(JSONObject()
+                .put("name", b.name).put("target", b.target).put("x", b.x).put("y", b.y))
+        }
+        sp.edit().putString("intercom_buttons", arr.toString()).apply()
+    }
+
+    // Playback level (0–100) the speaker is set to while an announcement plays.
+    var intercomVolume: Int
+        get() = sp.getInt("intercom_volume", 55)
+        set(v) = sp.edit().putInt("intercom_volume", v.coerceIn(0, 100)).apply()
+
+    // Idle opacity of the floating talk buttons (10–100 %); solid while moving/live.
+    var intercomOverlayOpacity: Int
+        get() = sp.getInt("intercom_overlay_opacity", 45)
+        set(v) = sp.edit().putInt("intercom_overlay_opacity", v.coerceIn(10, 100)).apply()
+
+    // Talk-button background colour as HSV: hue (0–360), saturation + value (0–100).
+    // Drop saturation to 0 for grey; value is the light↔dark control. Defaults match
+    // the old fixed blue (hue 230, sat 65, val 82).
+    var intercomButtonHue: Int
+        get() = sp.getInt("intercom_btn_hue", 230)
+        set(v) = sp.edit().putInt("intercom_btn_hue", v.coerceIn(0, 360)).apply()
+
+    var intercomButtonSat: Int
+        get() = sp.getInt("intercom_btn_sat", 65)
+        set(v) = sp.edit().putInt("intercom_btn_sat", v.coerceIn(0, 100)).apply()
+
+    var intercomButtonVal: Int
+        get() = sp.getInt("intercom_btn_val", 82)
+        set(v) = sp.edit().putInt("intercom_btn_val", v.coerceIn(0, 100)).apply()
+
+    // Talk-button text colour: hue (0–360) + a single "shade" (0 = black, 50 = full
+    // colour, 100 = white). Default 100 = white text.
+    var intercomTextHue: Int
+        get() = sp.getInt("intercom_text_hue", 0)
+        set(v) = sp.edit().putInt("intercom_text_hue", v.coerceIn(0, 360)).apply()
+
+    var intercomTextShade: Int
+        get() = sp.getInt("intercom_text_shade", 100)
+        set(v) = sp.edit().putInt("intercom_text_shade", v.coerceIn(0, 100)).apply()
+
+    // Draw the talk button with no filled background (just the label) when idle.
+    var intercomTransparentBg: Boolean
+        get() = sp.getBoolean("intercom_transparent_bg", false)
+        set(v) = sp.edit().putBoolean("intercom_transparent_bg", v).apply()
 
     val brokerUri: String get() = "tcp://$brokerHost:$brokerPort"
 }

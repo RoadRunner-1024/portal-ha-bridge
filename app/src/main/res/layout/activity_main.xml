@@ -209,6 +209,23 @@
             android:backgroundTint="@color/colorPrimary"
             android:layout_marginBottom="20dp" />
 
+        <!-- Intercom -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Intercom"
+            android:textSize="14sp"
+            android:textColor="@color/colorAccent"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_intercom_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Intercom Settings"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="20dp" />
+
         <!-- Tap Sensitivity -->
         <TextView
             android:layout_width="wrap_content"

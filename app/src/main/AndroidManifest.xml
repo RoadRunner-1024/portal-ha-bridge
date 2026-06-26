@@ -87,6 +87,14 @@
             android:name=".DisplaySettingsActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".IntercomSettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".IntercomButtonsActivity"
+            android:exported="false" />
+
         <service
             android:name=".BridgeService"
             android:exported="false"
