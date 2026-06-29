@@ -2,9 +2,12 @@ package com.aeonos.portalha
 
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -14,6 +17,9 @@ class DisplaySettingsActivity : AppCompatActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var swPresence: Switch
+    private lateinit var swEnhancedPresence: Switch
+    private lateinit var seekPresenceSound: SeekBar
+    private lateinit var tvPresenceSound: TextView
     private lateinit var swTimeout: Switch
     private lateinit var etMinutes: EditText
     private lateinit var tvPresenceStatus: TextView
@@ -24,12 +30,29 @@ class DisplaySettingsActivity : AppCompatActivity() {
     private val prefsListener =
         android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> updateUi() }
 
+    // Live ambient-sound readout next to the threshold, for calibration.
+    private var liveLevel = -1
+    private val levelHandler = Handler(Looper.getMainLooper())
+    private val levelPoll = object : Runnable {
+        override fun run() {
+            liveLevel = BridgeService.currentSoundLevel()
+            tvPresenceSound.text = soundLabel(prefs.presenceSoundThreshold)
+            levelHandler.postDelayed(this, 700)
+        }
+    }
+
+    private fun soundLabel(threshold: Int) =
+        "Sound threshold: $threshold" + if (liveLevel >= 0) "      (now: $liveLevel)" else ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
         setContentView(R.layout.activity_display_settings)
 
         swPresence = findViewById(R.id.sw_presence)
+        swEnhancedPresence = findViewById(R.id.sw_enhanced_presence)
+        seekPresenceSound = findViewById(R.id.seek_presence_sound)
+        tvPresenceSound = findViewById(R.id.tv_presence_sound)
         swTimeout = findViewById(R.id.sw_screen_timeout)
         etMinutes = findViewById(R.id.et_timeout_minutes)
         tvPresenceStatus = findViewById(R.id.tv_presence_status)
@@ -53,6 +76,24 @@ class DisplaySettingsActivity : AppCompatActivity() {
             updateUi()
         }
 
+        swEnhancedPresence.setOnCheckedChangeListener { _, checked ->
+            if (checked == prefs.enhancedPresenceEnabled) return@setOnCheckedChangeListener
+            prefs.enhancedPresenceEnabled = checked
+            BridgeService.applyDisplaySettings(this)
+            updateUi()
+        }
+
+        seekPresenceSound.progress = prefs.presenceSoundThreshold
+        tvPresenceSound.text = soundLabel(prefs.presenceSoundThreshold)
+        seekPresenceSound.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, p: Int, fromUser: Boolean) {
+                tvPresenceSound.text = soundLabel(p)
+                if (fromUser) prefs.presenceSoundThreshold = p   // read live by the sound callback
+            }
+            override fun onStartTrackingTouch(bar: SeekBar) = Unit
+            override fun onStopTrackingTouch(bar: SeekBar) { BridgeService.applyDisplaySettings(this@DisplaySettingsActivity) }
+        })
+
         swTimeout.setOnCheckedChangeListener { _, checked ->
             if (checked == prefs.screenTimeoutEnabled) return@setOnCheckedChangeListener
             prefs.screenTimeoutEnabled = checked
@@ -70,6 +111,7 @@ class DisplaySettingsActivity : AppCompatActivity() {
         super.onResume()
         prefs.registerListener(prefsListener)
         updateUi()
+        levelHandler.post(levelPoll)            // live sound readout for calibration
     }
 
     override fun onPause() {
@@ -77,6 +119,7 @@ class DisplaySettingsActivity : AppCompatActivity() {
         saveMinutes()
         saveTempOffset()
         prefs.unregisterListener(prefsListener)
+        levelHandler.removeCallbacks(levelPoll)
     }
 
     private fun hasReadLogs() =
@@ -107,6 +150,16 @@ class DisplaySettingsActivity : AppCompatActivity() {
         if (etMinutes.text.toString() != prefs.screenTimeoutMinutes.toString())
             etMinutes.setText(prefs.screenTimeoutMinutes.toString())
         findViewById<View>(R.id.row_timeout_mins).alpha = if (prefs.screenTimeoutEnabled) 1f else 0.4f
+
+        // Enhanced presence only applies while presence detection is on.
+        swEnhancedPresence.isChecked = prefs.enhancedPresenceEnabled
+        swEnhancedPresence.isEnabled = prefs.presenceEnabled
+        swEnhancedPresence.alpha = if (prefs.presenceEnabled) 1f else 0.4f
+        if (seekPresenceSound.progress != prefs.presenceSoundThreshold)
+            seekPresenceSound.progress = prefs.presenceSoundThreshold
+        tvPresenceSound.text = soundLabel(prefs.presenceSoundThreshold)
+        findViewById<View>(R.id.row_presence_sound).alpha =
+            if (prefs.presenceEnabled && prefs.enhancedPresenceEnabled) 1f else 0.4f
 
         if (hasTempSensor) {
             val s = "%.1f".format(prefs.tempOffset)

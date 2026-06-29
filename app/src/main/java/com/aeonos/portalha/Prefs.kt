@@ -121,6 +121,17 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("presence_enabled", false)
         set(v) = sp.edit().putBoolean("presence_enabled", v).apply()
 
+    // Enhanced presence: also count loud-enough ambient sound as "present" — helps
+    // in low light where Meta's camera face-detection gets unreliable. The threshold
+    // is 0–100, same scale as the Sound Level sensor (higher = needs louder sound).
+    var enhancedPresenceEnabled: Boolean
+        get() = sp.getBoolean("enhanced_presence", false)
+        set(v) = sp.edit().putBoolean("enhanced_presence", v).apply()
+
+    var presenceSoundThreshold: Int
+        get() = sp.getInt("presence_sound_threshold", 8)
+        set(v) = sp.edit().putInt("presence_sound_threshold", v.coerceIn(0, 100)).apply()
+
     // On-device screen-off timer (independent of HA). When enabled, the screen
     // sleeps after this many minutes with no presence / no wake. Disabled = the
     // screen stays on indefinitely.

@@ -33,6 +33,9 @@ class BridgeService : Service() {
         private const val CHANNEL = "portal_ha_bridge"
         private const val NOTIF_ID = 1
         private const val MOTION_CLEAR_MS = 5_000L
+        // How long a loud sound keeps "enhanced presence" present after the noise
+        // stops (people make only intermittent sound, so we bridge the gaps).
+        private const val SOUND_PRESENCE_HOLD_MS = 60_000L
         @Volatile private var crashGuardInstalled = false
 
         private const val ACTION_SET_CAMERA = "com.aeonos.portalha.SET_CAMERA"
@@ -100,6 +103,10 @@ class BridgeService : Service() {
         fun applyDisplaySettings(context: Context) =
             context.startForegroundService(Intent(context, BridgeService::class.java)
                 .setAction(ACTION_APPLY_DISPLAY))
+
+        // Latest 0–100 ambient sound level (or -1) — for calibrating the enhanced-
+        // presence threshold live in settings.
+        fun currentSoundLevel(): Int = instance?.lastSoundLevel ?: -1
 
         fun localIp(): String? = try {
             NetworkInterface.getNetworkInterfaces()
@@ -194,6 +201,13 @@ class BridgeService : Service() {
 
     // Portal presence (logcat heartbeat) + on-device screen-off timer
     private var presenceMonitor: PresenceMonitor? = null
+    // Enhanced presence: combine Meta's face detection (facePresent) with recent
+    // ambient-sound activity (lastSoundActivityMs) so a person in a dark room still
+    // registers. lastPublishedPresence dedupes the combined output (null = unsent).
+    @Volatile private var facePresent = false
+    @Volatile private var lastSoundActivityMs = 0L
+    @Volatile private var lastPublishedPresence: Boolean? = null
+    @Volatile private var lastSoundLevel = -1   // for the live readout in settings
     @Volatile private var screenOn = true
     @Volatile private var lastActivityMs = System.currentTimeMillis()
     private val timeoutThread = HandlerThread("portal-ha-timeout").also { it.start() }
@@ -214,7 +228,14 @@ class BridgeService : Service() {
         ScreenControl.enableAccessibility(this)
         sensorBridge = SensorBridge(this, ::publishRaw).also { it.start(p) }
         soundMonitor = SoundMonitor(this) { level ->
-            prefs?.let { publishRaw(HaDiscovery.soundStateTopic(it.deviceId), level.toString(), 0) }
+            lastSoundLevel = level
+            prefs?.let { p ->
+                publishRaw(HaDiscovery.soundStateTopic(p.deviceId), level.toString(), 0)
+                // Enhanced presence: loud-enough sound counts as activity.
+                if (p.enhancedPresenceEnabled && p.presenceEnabled && level >= p.presenceSoundThreshold)
+                    lastSoundActivityMs = System.currentTimeMillis()
+                recomputePresence(p)
+            }
         }
         intercom = Intercom(this, p.deviceId, { prefs?.deviceName ?: "Portal" }, { localIp() }, ::publishBytes)
             .also { it.attachSoundMonitor(soundMonitor) }
@@ -655,6 +676,9 @@ class BridgeService : Service() {
             motionPublished = false
             publishRaw(HaDiscovery.motionStateTopic(p.deviceId), "OFF", 0)
         }
+
+        // Clears enhanced-sound presence once the hold window lapses.
+        recomputePresence(p)
     }
 
     // ── Command router ────────────────────────────────────────────────────────
@@ -933,7 +957,8 @@ class BridgeService : Service() {
     private fun hasReadLogs() =
         checkSelfPermission(android.Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
 
-    // Start/stop the presence monitor to match prefs + permission.
+    // Start/stop the face-presence monitor to match prefs + permission, then
+    // publish the combined (face + enhanced-sound) presence state.
     private fun reconcilePresence(p: Prefs) {
         if (p.presenceEnabled && hasReadLogs()) {
             if (presenceMonitor == null) {
@@ -942,16 +967,39 @@ class BridgeService : Service() {
         } else {
             presenceMonitor?.release()
             presenceMonitor = null
-            if (p.presenceEnabled && !hasReadLogs())
+            facePresent = false
+            // Without READ_LOGS face detection can't run; enhanced (sound) presence
+            // still can, so only warn when there's no fallback configured.
+            if (p.presenceEnabled && !hasReadLogs() && !p.enhancedPresenceEnabled)
                 Log.w(TAG, "presence enabled but READ_LOGS not granted — run: adb shell pm grant $packageName android.permission.READ_LOGS")
+        }
+        if (p.presenceEnabled) {
+            recomputePresence(p)
+        } else {
+            lastPublishedPresence = null
             publishRaw(HaDiscovery.presenceStateTopic(p.deviceId), "OFF", 1, retained = true)
         }
     }
 
     private fun onPresenceChange(present: Boolean) {
-        val p = prefs ?: return
-        if (present) lastActivityMs = System.currentTimeMillis()  // presence keeps the screen awake
-        publishRaw(HaDiscovery.presenceStateTopic(p.deviceId), if (present) "ON" else "OFF", 1, retained = true)
+        facePresent = present
+        prefs?.let { recomputePresence(it) }
+    }
+
+    // Combined presence = Meta face detection OR (when enhanced) recent ambient
+    // sound. Publishes only on change. Called from the presence monitor, the sound
+    // callback, the display-settings apply path, and the periodic poll.
+    private fun recomputePresence(p: Prefs) {
+        if (!p.presenceEnabled) return
+        val soundActive = p.enhancedPresenceEnabled && lastSoundActivityMs > 0 &&
+            System.currentTimeMillis() - lastSoundActivityMs < SOUND_PRESENCE_HOLD_MS
+        val present = facePresent || soundActive
+        if (present) lastActivityMs = System.currentTimeMillis()   // keeps the screen awake
+        if (lastPublishedPresence != present) {
+            lastPublishedPresence = present
+            publishRaw(HaDiscovery.presenceStateTopic(p.deviceId), if (present) "ON" else "OFF", 1, retained = true)
+            Log.i(TAG, "presence -> ${if (present) "DETECTED" else "CLEAR"} (face=$facePresent sound=$soundActive)")
+        }
     }
 
     // Runs every 15s on its own thread (independent of MQTT). Sleeps the screen
@@ -959,8 +1007,9 @@ class BridgeService : Service() {
     private fun checkScreenTimeout() {
         val p = prefs ?: return
         if (!p.screenTimeoutEnabled || !screenOn) return
-        // Presence holds the screen awake and keeps resetting the countdown.
-        if (presenceMonitor?.isPresent == true) { lastActivityMs = System.currentTimeMillis(); return }
+        // Presence (face or enhanced-sound) holds the screen awake and resets the countdown.
+        recomputePresence(p)
+        if (lastPublishedPresence == true) { lastActivityMs = System.currentTimeMillis(); return }
         if (System.currentTimeMillis() - lastActivityMs >= p.screenTimeoutMinutes * 60_000L) {
             Log.i(TAG, "screen timeout: ${p.screenTimeoutMinutes}m idle — sleeping screen")
             ScreenControl.sleep()

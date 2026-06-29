@@ -62,7 +62,48 @@
             android:textColor="@color/hint"
             android:background="@color/surface"
             android:padding="10dp"
-            android:layout_marginBottom="24dp" />
+            android:layout_marginBottom="16dp" />
+
+        <!-- Enhanced presence (camera + ambient sound) -->
+        <Switch
+            android:id="@+id/sw_enhanced_presence"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Enhanced presence (also use sound)"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Also marks the room occupied when ambient sound rises above the threshold — helps in low light where the camera misses people. Needs Presence Detection on."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:id="@+id/row_presence_sound"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:id="@+id/tv_presence_sound"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Sound threshold"
+                android:textSize="13sp"
+                android:textColor="@color/onSurface" />
+
+            <SeekBar
+                android:id="@+id/seek_presence_sound"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="40" />
+        </LinearLayout>
 
         <!-- Screen Off Timer -->
         <Switch

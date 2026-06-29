@@ -22,7 +22,7 @@ Everything below appears automatically as one HA **device** (named whatever you 
 | **Camera** | switch | Master camera power on/off |
 | **Camera Streaming** | switch | RTSP H.264 stream on `:8554` (see below) |
 | **Motion Detection** | switch | adds **Motion** (binary_sensor) + **Motion Sensitivity** (number) |
-| **Portal Presence** | binary_sensor | Occupancy from Meta's *own* face detection (see below) |
+| **Portal Presence** | binary_sensor | Occupancy from Meta's *own* face detection, optionally + ambient sound (see below) |
 | **Presence Detection** | switch | Enable/disable the presence sensor |
 | **Ambient Light** | sensor | lux (`tcs34x0`) |
 | **Light R / G / B** | sensors | colour channels (hardware-dependent) |
@@ -160,6 +160,13 @@ The **Portal Presence** sensor doesn't run our own detection — it piggybacks o
 
 - Requires the `READ_LOGS` permission (ADB-grantable only).
 - Independent of the app's own camera — works with the camera feature off.
+
+### Enhanced presence (camera + sound)
+
+Meta's face detection gets unreliable in **low light** — a person in a dark room can read as absent. Turn on **Enhanced presence (also use sound)** (Settings → Display & Presence) and the **Portal Presence** sensor reports occupied when the camera sees someone **or** the ambient sound rises above a threshold you set. After a noise, it holds "present" for ~60 s (people are only intermittently audible), so the odd footstep or word keeps the room occupied.
+
+- The **Sound threshold** is on the same 0–100 scale as the **Sound Level** sensor. The settings screen shows a **live readout** next to it — glance at it while the room is quiet vs. occupied and set the threshold in the gap (quiet rooms usually sit around 5).
+- Uses the microphone (`RECORD_AUDIO`, already granted); needs Presence Detection on.
 
 ## Screen control
 
