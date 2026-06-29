@@ -51,8 +51,16 @@
             android:layout_height="wrap_content"
             android:text="Grant Missing Permissions"
             android:backgroundTint="#E65100"
-            android:layout_marginBottom="20dp"
+            android:layout_marginBottom="12dp"
             android:visibility="gone" />
+
+        <Button
+            android:id="@+id/btn_check_update"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Check for Updates"
+            android:backgroundTint="#37474F"
+            android:layout_marginBottom="20dp" />
 
         <!-- MQTT Settings -->
         <TextView

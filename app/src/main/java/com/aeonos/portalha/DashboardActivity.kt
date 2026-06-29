@@ -71,7 +71,9 @@ class DashboardActivity : AppCompatActivity() {
                 handler.proceed() // Accept self-signed certs for local HA
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) showPlaceholder("Failed to load — check the URL in Settings.")
+                if (request.isForMainFrame) showPlaceholder(
+                    "Failed to load.<br><br>Swipe in from the <b>left edge</b> to open the menu, " +
+                    "then tap <b>Settings</b> to check your Home Assistant URL.")
             }
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 // The WebView renderer died (usually OOM on a long-running
@@ -242,7 +244,9 @@ class DashboardActivity : AppCompatActivity() {
     private fun loadDashboard() {
         val url = prefs.haUrl.trim()
         if (url.isEmpty()) {
-            showPlaceholder("Swipe from the left edge to open Settings\nand enter your Home Assistant URL.")
+            showPlaceholder(
+                "Swipe in from the <b>left edge</b> to open the menu, " +
+                "then tap <b>Settings</b> to enter your Home Assistant URL.")
         } else {
             webView.loadUrl(normalise(url))
         }

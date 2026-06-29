@@ -129,9 +129,10 @@ for perm in WRITE_SECURE_SETTINGS RECORD_AUDIO CAMERA READ_LOGS; do
   adb_cmd shell pm grant "$PKG" "android.permission.$perm"
   printf "%s  granted %s%s\n" "$C_GREEN" "$perm" "$C_OFF"
 done
-adb_cmd shell appops set "$PKG" WRITE_SETTINGS allow         # read/set screen brightness
-adb_cmd shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow    # overlay -> background camera access
-printf "%s  set WRITE_SETTINGS + SYSTEM_ALERT_WINDOW = allow%s\n" "$C_GREEN" "$C_OFF"
+adb_cmd shell appops set "$PKG" WRITE_SETTINGS allow             # read/set screen brightness
+adb_cmd shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow        # overlay -> background camera access
+adb_cmd shell appops set "$PKG" REQUEST_INSTALL_PACKAGES allow   # in-app "Check for Updates"
+printf "%s  set WRITE_SETTINGS + SYSTEM_ALERT_WINDOW + REQUEST_INSTALL_PACKAGES = allow%s\n" "$C_GREEN" "$C_OFF"
 
 if [ "$SET_LAUNCHER" -eq 1 ]; then
   if adb_cmd shell pm list packages com.immortal.launcher 2>/dev/null | grep -q com.immortal.launcher; then

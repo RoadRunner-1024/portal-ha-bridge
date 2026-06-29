@@ -135,9 +135,10 @@ foreach ($perm in @(
 }
 
 # Special-access app-ops - set via appops, not pm grant.
-Adb shell "appops set $pkg WRITE_SETTINGS allow"        # read/set screen brightness
-Adb shell "appops set $pkg SYSTEM_ALERT_WINDOW allow"   # overlay -> background camera access
-Write-Host "  set WRITE_SETTINGS + SYSTEM_ALERT_WINDOW = allow" -ForegroundColor Green
+Adb shell "appops set $pkg WRITE_SETTINGS allow"            # read/set screen brightness
+Adb shell "appops set $pkg SYSTEM_ALERT_WINDOW allow"       # overlay -> background camera access
+Adb shell "appops set $pkg REQUEST_INSTALL_PACKAGES allow"  # in-app "Check for Updates"
+Write-Host "  set WRITE_SETTINGS + SYSTEM_ALERT_WINDOW + REQUEST_INSTALL_PACKAGES = allow" -ForegroundColor Green
 
 if ($SetLauncher) {
     $immortal = "com.immortal.launcher/com.immortal.launcher.HomeActivity"

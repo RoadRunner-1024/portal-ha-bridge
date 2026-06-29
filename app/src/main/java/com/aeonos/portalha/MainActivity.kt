@@ -35,6 +35,8 @@ class MainActivity : AppCompatActivity() {
         // so no adb is needed (except the optional WRITE_SECURE_SETTINGS).
         findViewById<Button>(R.id.btn_grant).setOnClickListener { grantNextMissing() }
 
+        findViewById<Button>(R.id.btn_check_update).setOnClickListener { checkForUpdate(it as Button) }
+
         val etHost = findViewById<EditText>(R.id.et_host)
         val etPort = findViewById<EditText>(R.id.et_port)
         val etUser = findViewById<EditText>(R.id.et_user)
@@ -111,6 +113,77 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ── In-app updater ────────────────────────────────────────────────────────
+
+    private fun checkForUpdate(btn: Button) {
+        val orig = btn.text
+        btn.isEnabled = false; btn.text = "Checking…"
+        Thread {
+            val result = runCatching { Updater.fetchLatest() }
+            runOnUiThread {
+                btn.isEnabled = true; btn.text = orig
+                result.onSuccess { rel ->
+                    if (Updater.isNewer(rel.version, BuildConfig.VERSION_NAME)) promptUpdate(btn, rel)
+                    else Toast.makeText(this,
+                        "You're on the latest version (v${BuildConfig.VERSION_NAME}).", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(this, "Couldn't check for updates: ${it.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.also { it.isDaemon = true }.start()
+    }
+
+    private fun promptUpdate(btn: Button, rel: Updater.Release) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Update available")
+            .setMessage("A newer version is available:\n\nv${BuildConfig.VERSION_NAME}  →  v${rel.version}\n\n" +
+                "Download and install it now? Your settings are kept.")
+            .setPositiveButton("Update") { _, _ -> downloadAndInstall(btn, rel) }
+            .setNegativeButton("Later", null)
+            .show()
+    }
+
+    private fun downloadAndInstall(btn: Button, rel: Updater.Release) {
+        if (!Updater.canInstall(this)) { showInstallPermDialog(); return }
+        val dest = java.io.File(cacheDir, "update.apk")
+        btn.isEnabled = false; btn.text = "Downloading… 0%"
+        Thread {
+            val r = runCatching {
+                Updater.downloadApk(rel.apkUrl, dest) { pct -> runOnUiThread { btn.text = "Downloading… $pct%" } }
+            }
+            runOnUiThread {
+                btn.isEnabled = true; btn.text = "Check for Updates"
+                r.onSuccess {
+                    runCatching { Updater.install(this, dest) }.onFailure {
+                        Toast.makeText(this, "Install failed: ${it.message}", Toast.LENGTH_LONG).show()
+                    }
+                }.onFailure {
+                    Toast.makeText(this, "Download failed: ${it.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.also { it.isDaemon = true }.start()
+    }
+
+    // "Install unknown apps" — flaky to toggle on Portal, so offer the settings
+    // page and the exact adb fallback (the provisioner grants this automatically).
+    private fun showInstallPermDialog() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Allow installing updates")
+            .setMessage("To install updates in-app, this app needs the \"install unknown apps\" " +
+                "permission.\n\nTry Open settings below. If the toggle doesn't take on your Portal, run " +
+                "this on a computer with the Portal connected, then try again:\n\n" +
+                "adb shell appops set $packageName REQUEST_INSTALL_PACKAGES allow\n\n" +
+                "(The provisioner does this for you.)")
+            .setPositiveButton("Open settings") { _, _ ->
+                runCatching {
+                    startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }.onFailure { Toast.makeText(this, "Settings page unavailable — use the adb command.", Toast.LENGTH_LONG).show() }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     override fun onResume() {
         super.onResume()
         ScreenControl.enableAccessibility(this)
@@ -130,6 +203,7 @@ class MainActivity : AppCompatActivity() {
         val hasOverlay = Settings.canDrawOverlays(this)
 
         findViewById<TextView>(R.id.tv_status).text = buildString {
+            appendLine("Version:   ${BuildConfig.VERSION_NAME}")
             appendLine("Device ID: ${prefs.deviceId}")
             appendLine("IP:        ${BridgeService.localIp() ?: "(no network)"}")
             appendLine("Broker:    ${prefs.brokerUri}")
