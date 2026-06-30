@@ -22,8 +22,8 @@ android {
         // 28 = Android 9 (Portal+); 29 = Android 10 (Portal / Portal Mini).
         minSdk = 28
         targetSdk = 35
-        versionCode = 25
-        versionName = "1.11.0"
+        versionCode = 27
+        versionName = "1.11.2"
     }
 
     buildFeatures {

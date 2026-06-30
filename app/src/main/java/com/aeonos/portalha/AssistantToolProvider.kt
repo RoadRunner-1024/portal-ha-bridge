@@ -7,6 +7,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.net.HttpURLConnection
@@ -82,6 +83,8 @@ class AssistantToolProvider : ContentProvider() {
             }
             PREFIX + "home_assistant" ->
                 haConversation(ctx, args.optString("command", "").trim())
+            PREFIX + "home_assistant_list" ->
+                haList(ctx, args.optString("query", "").trim(), args.optString("domain", "").trim())
             PREFIX + "home_assistant_service" -> haService(
                 ctx,
                 args.optString("domain", "").trim(),
@@ -123,6 +126,34 @@ class AssistantToolProvider : ContentProvider() {
         return ok().put("called", "$domain.$service")
     }
 
+    // Discover entities so the model can find an entity_id by name, then control it
+    // via haService — works for ALL entities, no HA Assist exposure needed. Filters
+    // the full state list by domain and/or a name/id substring; caps the result so a
+    // large install (hundreds of entities) doesn't bloat the conversation.
+    private fun haList(ctx: Context, query: String, domain: String): JSONObject {
+        val (base, token) = haCreds(ctx)
+            ?: return err("Home Assistant URL/token not set in Portal HA Bridge settings")
+        val body = httpGet("$base/api/states", token) ?: return err("Home Assistant request failed")
+        val arr = runCatching { JSONArray(body) }.getOrNull() ?: return err("bad states response")
+        val q = query.lowercase()
+        val out = JSONArray()
+        var matched = 0
+        val cap = 40
+        for (i in 0 until arr.length()) {
+            val e = arr.optJSONObject(i) ?: continue
+            val id = e.optString("entity_id")
+            if (domain.isNotEmpty() && !id.startsWith("$domain.")) continue
+            val name = e.optJSONObject("attributes")?.optString("friendly_name") ?: ""
+            if (q.isNotEmpty() && !id.lowercase().contains(q) && !name.lowercase().contains(q)) continue
+            matched++
+            if (out.length() < cap)
+                out.put(JSONObject().put("entity_id", id).put("name", name).put("state", e.optString("state")))
+        }
+        val res = ok().put("count", matched).put("entities", out)
+        if (matched > cap) res.put("note", "showing first $cap of $matched - narrow with query or domain")
+        return res
+    }
+
     private fun haCreds(ctx: Context): Pair<String, String>? {
         val p = Prefs(ctx)
         val base = p.haUrl.trim().trimEnd('/')
@@ -152,6 +183,28 @@ class AssistantToolProvider : ContentProvider() {
             else { Log.w(TAG, "tools: HA HTTP $code: ${text.take(200)}"); null }
         } catch (e: Exception) {
             Log.w(TAG, "tools: HA HTTP error: ${e.message}"); null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    // GET with the bearer token; returns the response body or null on error/non-2xx.
+    private fun httpGet(url: String, token: String): String? {
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = HTTP_TIMEOUT_MS
+                readTimeout = HTTP_TIMEOUT_MS
+                setRequestProperty("Authorization", "Bearer $token")
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val text = stream?.bufferedReader()?.use(BufferedReader::readText) ?: ""
+            if (code in 200..299) text
+            else { Log.w(TAG, "tools: HA GET $code: ${text.take(200)}"); null }
+        } catch (e: Exception) {
+            Log.w(TAG, "tools: HA GET error: ${e.message}"); null
         } finally {
             conn?.disconnect()
         }

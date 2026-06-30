@@ -3,70 +3,8 @@
     <string name="app_name">Portal HA Bridge</string>
     <string name="accessibility_label">Portal HA Screen Control</string>
     <string name="accessibility_description">Allows Portal HA Bridge to turn the screen off on command from Home Assistant. It does not read or interact with screen content.</string>
-
-    <!-- One-sentence summary shown in the assistant's Settings -> External tools row. -->
-    <string name="portal_tools_summary">Control this Portal (screen, camera, presence) and your whole Home Assistant smart home by voice.</string>
-
-    <!--
-        Tool declarations exposed to the portal-assistant ("Jarvis") plugin contract
-        (com.portal.assistant.tools). A JSON array of LLM function declarations.
-        Tool names are reverse-domain and must NOT start with "portal." (reserved for
-        the assistant's built-ins). CDATA keeps the JSON readable (no XML escaping).
-    -->
-    <string name="portal_tools"><![CDATA[
-[
-  {
-    "name": "com.aeonos.portalha.set_screen",
-    "description": "Turn this Meta Portal's display on (wake it) or off (sleep/lock the screen).",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "on": { "type": "boolean", "description": "true = wake the screen, false = turn the screen off." }
-      },
-      "required": ["on"]
-    }
-  },
-  {
-    "name": "com.aeonos.portalha.set_camera",
-    "description": "Turn this Portal's camera (the Home Assistant video stream) on or off.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "on": { "type": "boolean", "description": "true = enable the camera, false = disable it." }
-      },
-      "required": ["on"]
-    }
-  },
-  {
-    "name": "com.aeonos.portalha.get_presence",
-    "description": "Check whether someone is currently present in front of this Portal (room occupancy).",
-    "parameters": { "type": "object", "properties": {} }
-  },
-  {
-    "name": "com.aeonos.portalha.home_assistant",
-    "description": "Control the user's smart home, or ask about its state, in plain English through Home Assistant - lights, switches, scenes, climate, locks, covers, media and more. Pass the request verbatim, e.g. 'turn on the porch lights', 'run the goodnight scene', or 'is the garage door open?'. Use this for any home-automation request.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "command": { "type": "string", "description": "The user's natural-language smart-home request or question." }
-      },
-      "required": ["command"]
-    }
-  },
-  {
-    "name": "com.aeonos.portalha.home_assistant_service",
-    "description": "Advanced: call a specific Home Assistant service directly when the exact domain, service and entity are known (more precise than the plain-language tool). Example: domain 'light', service 'turn_on', entity_id 'light.kitchen'.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "domain": { "type": "string", "description": "Service domain, e.g. 'light', 'switch', 'scene', 'climate', 'lock'." },
-        "service": { "type": "string", "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'set_temperature'." },
-        "entity_id": { "type": "string", "description": "Target entity id, e.g. 'light.kitchen'. Optional for services that don't need one." },
-        "data_json": { "type": "string", "description": "Optional extra service data as a JSON object string, e.g. {'brightness_pct': 50}." }
-      },
-      "required": ["domain", "service"]
-    }
-  }
-]
-    ]]></string>
+    <!-- The portal-assistant ("Jarvis") tool declarations + summary are declared as INLINE literal
+         android:value strings on the AssistantToolProvider <provider> in AndroidManifest.xml, NOT as
+         @string/ resources here — the assistant reads them via metaData.getString(), which returns null
+         for a @string/ reference (it comes through as a resource id). Inline literals always read back. -->
 </resources>
