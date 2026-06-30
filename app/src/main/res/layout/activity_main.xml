@@ -149,6 +149,15 @@
             android:textColor="@color/onSurface"
             android:layout_marginBottom="8dp" />
 
+        <EditText
+            android:id="@+id/et_ha_token"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="HA long-lived token (optional - for voice-assistant control)"
+            android:inputType="textPassword"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="8dp" />
+
 
         <Button
             android:id="@+id/btn_save"

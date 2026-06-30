@@ -139,5 +139,20 @@
             android:name=".UpdateInstallReceiver"
             android:exported="false" />
 
+        <!--
+            portal-assistant ("Jarvis") tool-provider plugin. Exposes Portal controls
+            (screen/camera/presence) and a Home Assistant passthrough as voice tools.
+            Jarvis discovers it via the two meta-data strings (the public ToolContract);
+            it's off until the user enables it in Jarvis Settings -> External tools, and
+            AssistantToolProvider only accepts invokes from the assistant package.
+        -->
+        <provider
+            android:name=".AssistantToolProvider"
+            android:authorities="com.aeonos.portalha.tools"
+            android:exported="true">
+            <meta-data android:name="com.portal.assistant.tools" android:value="@string/portal_tools" />
+            <meta-data android:name="com.portal.assistant.tools.summary" android:value="@string/portal_tools_summary" />
+        </provider>
+
     </application>
 </manifest>

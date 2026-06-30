@@ -157,6 +157,13 @@ class Prefs(private val context: Context) {
         get() = sp.getString("ha_url", "") ?: ""
         set(v) = sp.edit().putString("ha_url", v).apply()
 
+    // Long-lived access token for Home Assistant's REST API, used by the Jarvis
+    // tool-provider (AssistantToolProvider) for the smart-home passthrough. Create
+    // one in HA: Profile -> Long-Lived Access Tokens. Stays on-device, never leaves.
+    var haToken: String
+        get() = sp.getString("ha_token", "") ?: ""
+        set(v) = sp.edit().putString("ha_token", v.trim()).apply()
+
     // Portal-to-Portal intercom: show a floating push-to-talk button over the
     // dashboard (optional — the drawer always has a hold-to-announce button).
     var intercomOverlayEnabled: Boolean

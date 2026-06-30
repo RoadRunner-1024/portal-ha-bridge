@@ -108,6 +108,10 @@ class BridgeService : Service() {
         // presence threshold live in settings.
         fun currentSoundLevel(): Int = instance?.lastSoundLevel ?: -1
 
+        // Latest combined presence (face OR sound), or null if unknown / presence
+        // detection is off. Read by the Jarvis tool-provider's get_presence tool.
+        fun currentPresence(): Boolean? = instance?.lastPublishedPresence
+
         fun localIp(): String? = try {
             NetworkInterface.getNetworkInterfaces()
                 .asSequence()
