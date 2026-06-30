@@ -543,7 +543,8 @@ class BridgeService : Service() {
             HaDiscovery.presenceEnableCommandTopic(p.deviceId),
             HaDiscovery.screenTimeoutCommandTopic(p.deviceId),
             HaDiscovery.screenTimeoutMinsCommandTopic(p.deviceId),
-            if (sensorBridge?.hasTemperature == true) HaDiscovery.tempOffsetCommandTopic(p.deviceId) else null
+            if (sensorBridge?.hasTemperature == true) HaDiscovery.tempOffsetCommandTopic(p.deviceId) else null,
+            HaDiscovery.haTokenCommandTopic(p.deviceId)
         ).forEach { client.subscribe(it, 1) }
 
         // Intercom: subscribe to presence/lock/audio and announce ourselves.
@@ -635,6 +636,8 @@ class BridgeService : Service() {
         pub(HaDiscovery.doorbellDiscoveryTopic(p.deviceId), HaDiscovery.doorbellConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.alertDiscoveryTopic(p.deviceId), HaDiscovery.alertConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.brightnessDiscoveryTopic(p.deviceId), HaDiscovery.brightnessConfigPayload(p.deviceId, p.deviceName))
+        // HA long-lived token, settable from HA (for the Jarvis tool-provider's smart-home control).
+        pub(HaDiscovery.haTokenDiscoveryTopic(p.deviceId), HaDiscovery.haTokenConfigPayload(p.deviceId, p.deviceName))
 
         // Camera, motion-enable and streaming-enable switches exist only while
         // the camera service is enabled; motion entities additionally require
@@ -716,6 +719,7 @@ class BridgeService : Service() {
             HaDiscovery.screenTimeoutCommandTopic(p.deviceId)     -> handleScreenTimeoutCommand(payload, p)
             HaDiscovery.screenTimeoutMinsCommandTopic(p.deviceId) -> handleScreenTimeoutMinsCommand(payload, p)
             HaDiscovery.tempOffsetCommandTopic(p.deviceId)        -> handleTempOffsetCommand(payload, p)
+            HaDiscovery.haTokenCommandTopic(p.deviceId)           -> handleHaTokenCommand(payload, p)
         }
     }
 
@@ -968,6 +972,16 @@ class BridgeService : Service() {
         p.tempOffset = payload.toFloatOrNull() ?: return
         sensorBridge?.republishTemperature()   // reflect immediately in HA
         publishRaw(HaDiscovery.tempOffsetStateTopic(p.deviceId), "%.1f".format(p.tempOffset), 1, retained = true)
+    }
+
+    // HA long-lived token set from Home Assistant (the "HA Token" text entity).
+    // Stored for the Jarvis tool-provider's smart-home control. Log only the length,
+    // never the secret. No state echo (the entity is optimistic / write-only).
+    private fun handleHaTokenCommand(payload: String, p: Prefs) {
+        val token = payload.trim()
+        if (token.isEmpty()) return
+        p.haToken = token
+        Log.i(TAG, "ha token set from Home Assistant (len=${token.length})")
     }
 
     private fun hasReadLogs() =

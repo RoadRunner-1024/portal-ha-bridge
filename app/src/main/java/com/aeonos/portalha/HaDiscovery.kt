@@ -51,6 +51,20 @@ object HaDiscovery {
         return """{"name":"Temperature Offset","unique_id":"${deviceId}_temp_offset","device":${device(deviceId, name)},"state_topic":"${tempOffsetStateTopic(deviceId)}","command_topic":"${tempOffsetCommandTopic(deviceId)}","min":-20,"max":20,"step":0.5,"mode":"box","unit_of_measurement":"°C","icon":"mdi:thermometer-plus","entity_category":"config"}"""
     }
 
+    // HA long-lived token, settable FROM Home Assistant (so it never has to be typed
+    // on the Portal). A `text` entity in password mode; NO state_topic, so the token
+    // is optimistic-only and never echoed back / retained on the broker. The app
+    // stores whatever HA publishes to the command topic into Prefs.haToken.
+    fun haTokenDiscoveryTopic(deviceId: String) =
+        "homeassistant/text/${deviceId}_hatoken/config"
+
+    fun haTokenCommandTopic(deviceId: String) = "portal/$deviceId/config/hatoken/set"
+
+    fun haTokenConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"HA Token","unique_id":"${deviceId}_hatoken","device":${device(deviceId, name)},"command_topic":"${haTokenCommandTopic(deviceId)}","mode":"password","max":255,"icon":"mdi:key","entity_category":"config"}"""
+    }
+
     // ── Accelerometer ─────────────────────────────────────────────────────────
 
     fun accelDiscoveryTopic(deviceId: String, axis: String) =
