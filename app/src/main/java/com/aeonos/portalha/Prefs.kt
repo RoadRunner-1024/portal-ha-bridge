@@ -132,6 +132,16 @@ class Prefs(private val context: Context) {
         get() = sp.getInt("presence_sound_threshold", 8)
         set(v) = sp.edit().putInt("presence_sound_threshold", v.coerceIn(0, 100)).apply()
 
+    // Coexist with an always-on external voice assistant (e.g. rudysev/portal-wake
+    // "hey jarvis", com.portal.wake). The Portal has ONE mic slot, so to let the
+    // assistant hear its wake word we must RELEASE the mic: SoundMonitor stops, the
+    // Sound Level sensor + sound-based enhanced presence go away, and the intercom
+    // captures on-demand only while you're announcing (the assistant's own arbiter
+    // yields for those few seconds and reclaims when you let go).
+    var coexistVoiceAssistant: Boolean
+        get() = sp.getBoolean("coexist_voice_assistant", false)
+        set(v) = sp.edit().putBoolean("coexist_voice_assistant", v).apply()
+
     // On-device screen-off timer (independent of HA). When enabled, the screen
     // sleeps after this many minutes with no presence / no wake. Disabled = the
     // screen stays on indefinitely.

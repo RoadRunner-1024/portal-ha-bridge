@@ -156,6 +156,13 @@ class Intercom(
     private var soundMonitor: SoundMonitor? = null
     fun attachSoundMonitor(sm: SoundMonitor?) { soundMonitor = sm }
 
+    // Coexist mode: SoundMonitor isn't holding the mic (it's released so an external
+    // voice assistant can hear its wake word), so an announce opens its OWN short-
+    // lived recorder for the push-to-talk and frees it again the moment you let go.
+    @Volatile private var onDemandCapture = false
+    fun setOnDemandCapture(b: Boolean) { onDemandCapture = b }
+    private var txCaptureThread: Thread? = null
+
     // Topics the service should subscribe to, with the QoS to use for each.
     fun subscriptions(): List<Pair<String, Int>> = listOf(
         "${PRESENCE_PREFIX}+" to 1,
@@ -320,9 +327,12 @@ class Intercom(
     }
 
     // ── Transmit (announce) ───────────────────────────────────────────────────
-    // We DON'T open our own recorder. SoundMonitor already holds the mic warm and
-    // continuously; while announcing we just attach a frame sink to it so its PCM
-    // chunks fan out to the broker. No handoff, no warmup, near-zero start latency.
+    // Normal mode: we DON'T open our own recorder — SoundMonitor already holds the
+    // mic warm, so while announcing we just attach a frame sink to it and its PCM
+    // chunks fan out to the broker (no handoff, no warmup, near-zero start latency).
+    // Coexist mode: the mic is released for an external voice assistant, so we open
+    // a short-lived recorder for the announce (startOnDemandCapture) and close it on
+    // release — the assistant's own arbiter yields for those seconds and reclaims.
     private val txRunning = AtomicBoolean(false)
     @Volatile private var txTopic = ""
     @Volatile private var txFrames = 0
@@ -339,8 +349,9 @@ class Intercom(
             != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "intercom: RECORD_AUDIO not granted"); return false
         }
-        val sm = soundMonitor
-        if (sm == null) { Log.w(TAG, "intercom: mic not ready yet"); return false }
+        if (!onDemandCapture && soundMonitor == null) {
+            Log.w(TAG, "intercom: mic not ready yet"); return false
+        }
 
         txRunning.set(true)
         acquireLock()
@@ -348,7 +359,8 @@ class Intercom(
         txFrames = 0
         txBeeped = false
         lastLockRefresh = System.currentTimeMillis()
-        sm.frameSink = { buf, n -> onMicFrame(buf, n) }
+        if (onDemandCapture) startOnDemandCapture()                        // open our own mic now
+        else soundMonitor?.frameSink = { buf, n -> onMicFrame(buf, n) }    // ride the warm mic
         Log.i(TAG, "intercom: announcing → $txTopic")
         return true
     }
@@ -356,8 +368,40 @@ class Intercom(
     fun stopTalk() {
         if (!txRunning.compareAndSet(true, false)) return
         soundMonitor?.frameSink = null
+        txCaptureThread = null   // the on-demand loop sees txRunning=false and exits, freeing its recorder
         releaseLock()
         Log.i(TAG, "intercom: stopped talking — sent $txFrames frames")
+    }
+
+    // Coexist-mode capture: a recorder that lives only for one announce. Mirrors
+    // SoundMonitor's config (VOICE_RECOGNITION 16k mono PCM16) and feeds the same
+    // onMicFrame packer; runs while txRunning, then releases the mic so the external
+    // voice assistant can reclaim it.
+    private fun startOnDemandCapture() {
+        txCaptureThread = Thread({
+            val minBuf = AudioRecord.getMinBufferSize(
+                SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            val rec = runCatching {
+                AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                    maxOf(minBuf, FRAME_SAMPLES * 2 * 4))
+            }.getOrNull()
+            if (rec == null || rec.state != AudioRecord.STATE_INITIALIZED) {
+                runCatching { rec?.release() }
+                Log.w(TAG, "intercom: on-demand mic unavailable")
+                return@Thread
+            }
+            runCatching { rec.startRecording() }
+            val buf = ShortArray(FRAME_SAMPLES)
+            try {
+                while (txRunning.get()) {
+                    val n = rec.read(buf, 0, buf.size)
+                    if (n > 0) onMicFrame(buf, n)
+                }
+            } finally {
+                runCatching { rec.stop(); rec.release() }
+            }
+        }, "portal-ha-intercom-tx").also { it.isDaemon = true; it.start() }
     }
 
     // Called on SoundMonitor's capture thread for each warm-mic chunk while we're

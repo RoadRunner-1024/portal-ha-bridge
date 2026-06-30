@@ -105,6 +105,25 @@
                 android:max="40" />
         </LinearLayout>
 
+        <!-- Coexist with an external voice assistant -->
+        <Switch
+            android:id="@+id/sw_coexist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Coexist with voice assistant"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Releases the microphone for an always-on wake-word assistant (e.g. portal-wake 'Hey Jarvis'). The Sound Level sensor and sound-based presence turn off (the Portal has a single mic), and the intercom captures only while you hold to announce."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="24dp" />
+
         <!-- Screen Off Timer -->
         <Switch
             android:id="@+id/sw_screen_timeout"

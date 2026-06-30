@@ -19,6 +19,8 @@
       .\provision.ps1 -Apk C:\path\portal-ha-bridge.apk   # install a specific APK
       .\provision.ps1 -Serial 821..   # target a specific device (use when several are connected)
       .\provision.ps1 -SetLauncher    # also set immortal as the default home launcher
+      .\provision.ps1 -FreeAlohaMic   # free the mic for 2-way intercom (disables Meta's "Hey Alexa")
+      .\provision.ps1 -RestoreAlohaMic # undo -FreeAlohaMic (re-enable "Hey Alexa")
 
   The APK is resolved from, in order: -Apk; the build output
   (app\build\outputs\apk\release\app-release.apk); a portal-ha-bridge.apk /
@@ -29,7 +31,9 @@ param(
     [string]$Serial,
     [string]$Apk,
     [switch]$Install,
-    [switch]$SetLauncher
+    [switch]$SetLauncher,
+    [switch]$FreeAlohaMic,
+    [switch]$RestoreAlohaMic
 )
 
 # NOTE: deliberately NOT "Stop". adb writes harmless first-run chatter to
@@ -152,6 +156,26 @@ if ($api -and ([int]$api -lt 29)) {
     Write-Host "  disabled com.facebook.aloha.rro.niu.android" -ForegroundColor Green
 }
 
+# Two-way intercom mic fix -- free the Portal's single mic slot (opt-in).
+# Meta's "Hey Alexa" wake detector (com.millennium) holds the far-field mic array
+# and throttles a third-party AudioRecord to ~20% of real-time, leaving the device
+# receive-only for the Portal-to-Portal intercom. Disabling it (reversible, per-user)
+# frees the mic so the device becomes two-way. It does NOT touch
+# com.facebook.portal.aiservice, so Meta face-presence + Smart-Camera framing stay.
+$millennium = "com.millennium"
+$hasMillennium = (Adb shell "pm list packages $millennium") -match [regex]::Escape($millennium)
+if ($FreeAlohaMic) {
+    if ($hasMillennium) {
+        Adb shell "pm disable-user --user 0 $millennium" | Out-Null
+        Write-Host "  freed mic for two-way intercom (disabled $millennium)" -ForegroundColor Green
+    } else {
+        Write-Host "  -FreeAlohaMic: $millennium not present - mic already free" -ForegroundColor DarkGray
+    }
+} elseif ($RestoreAlohaMic) {
+    Adb shell "pm enable $millennium" | Out-Null
+    Write-Host "  restored $millennium (Hey Alexa) - intercom returns to receive-only" -ForegroundColor Green
+}
+
 if ($SetLauncher) {
     $immortal = "com.immortal.launcher/com.immortal.launcher.HomeActivity"
     if ((Adb shell "pm list packages com.immortal.launcher") -match "com.immortal.launcher") {
@@ -186,6 +210,11 @@ if ($api -and ([int]$api -lt 29)) {
     $overlayOut = (Adb shell "cmd overlay list") -join "`n"
     $overlayOk = $overlayOut -match '\[ \].*com\.facebook\.aloha\.rro\.niu\.android'
     Write-Host ("  {0,-22} {1}" -f "InstallerOverlay", $(if ($overlayOk) {"OK (disabled)"} else {"STILL ENABLED"})) -ForegroundColor $(if ($overlayOk) {"Green"} else {"Red"})
+}
+if ($FreeAlohaMic) {
+    $stillEnabled = (Adb shell "pm list packages -e $millennium") -match [regex]::Escape($millennium)
+    $micFreed = -not $stillEnabled
+    Write-Host ("  {0,-22} {1}" -f "TwoWayMic", $(if ($micFreed) {"OK (mic freed)"} else {"STILL THROTTLED"})) -ForegroundColor $(if ($micFreed) {"Green"} else {"Red"})
 }
 
 Write-Host "`nDone." -ForegroundColor Cyan

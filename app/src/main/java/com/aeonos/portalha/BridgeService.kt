@@ -237,15 +237,21 @@ class BridgeService : Service() {
                 recomputePresence(p)
             }
         }
+        // Coexist with an external voice assistant: release the mic — don't run the
+        // continuous SoundMonitor, and have the intercom capture on-demand instead.
+        val coexist = p.coexistVoiceAssistant
         intercom = Intercom(this, p.deviceId, { prefs?.deviceName ?: "Portal" }, { localIp() }, ::publishBytes)
-            .also { it.attachSoundMonitor(soundMonitor) }
+            .also {
+                it.attachSoundMonitor(if (coexist) null else soundMonitor)
+                it.setOnDemandCapture(coexist)
+            }
         instance = this
 
         // Measure mic capability first (it owns the mic briefly), then start the
         // sound sensor + the PTT overlay once we know whether this Portal can send.
         intercom?.probeTransmitCapability()   // ~1.1s, owns the mic while measuring
         Handler(Looper.getMainLooper()).postDelayed({
-            soundMonitor?.start()
+            if (!coexist) soundMonitor?.start()   // coexist = leave the mic for the assistant
             reconcileIntercomOverlays()
         }, 1_500L)
 
@@ -339,6 +345,7 @@ class BridgeService : Service() {
             val p = prefs ?: Prefs(this).also { prefs = it }
             commandExecutor.submit {
                 runCatching {
+                    applyCoexist(p)
                     reconcilePresence(p)
                     publishDisplayDiscovery(p)
                     publishDisplayStates(p)
@@ -612,7 +619,12 @@ class BridgeService : Service() {
 
         pub(HaDiscovery.tapDiscoveryTopic(p.deviceId), HaDiscovery.tapConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.sensitivityDiscoveryTopic(p.deviceId), HaDiscovery.sensitivityConfigPayload(p.deviceId, p.deviceName))
-        pub(HaDiscovery.soundDiscoveryTopic(p.deviceId), HaDiscovery.soundConfigPayload(p.deviceId, p.deviceName))
+        // The Sound Level sensor only exists when we hold the mic; in coexist mode the
+        // mic is released, so remove the entity instead of publishing a stale value.
+        if (p.coexistVoiceAssistant)
+            client.publish(HaDiscovery.soundDiscoveryTopic(p.deviceId), emptyRetained())
+        else
+            pub(HaDiscovery.soundDiscoveryTopic(p.deviceId), HaDiscovery.soundConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.micMuteDiscoveryTopic(p.deviceId), HaDiscovery.micMuteConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.volumeDiscoveryTopic(p.deviceId), HaDiscovery.volumeConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.volumeMuteDiscoveryTopic(p.deviceId), HaDiscovery.volumeMuteConfigPayload(p.deviceId, p.deviceName))
@@ -984,6 +996,32 @@ class BridgeService : Service() {
     private fun onPresenceChange(present: Boolean) {
         facePresent = present
         prefs?.let { recomputePresence(it) }
+    }
+
+    // Apply the coexist-with-voice-assistant setting live (toggled from settings).
+    // ON  → release the mic: stop SoundMonitor, drop the Sound Level sensor from HA,
+    //        and put the intercom on on-demand capture. OFF → reclaim the mic + sensor.
+    // Idempotent — the isRunning() guards make repeated apply calls a no-op.
+    private fun applyCoexist(p: Prefs) {
+        val coexist = p.coexistVoiceAssistant
+        intercom?.attachSoundMonitor(if (coexist) null else soundMonitor)
+        intercom?.setOnDemandCapture(coexist)
+        if (coexist) {
+            if (soundMonitor?.isRunning() == true) {
+                soundMonitor?.stop()
+                Log.i(TAG, "coexist: released mic for external voice assistant")
+            }
+            lastSoundLevel = -1
+            // Can't update the Sound Level sensor without the mic — remove it from HA.
+            publishRaw(HaDiscovery.soundDiscoveryTopic(p.deviceId), "", 1, retained = true)
+        } else {
+            if (soundMonitor?.isRunning() == false) {
+                soundMonitor?.start()
+                Log.i(TAG, "coexist: off — reclaimed mic for the sound sensor")
+            }
+            publishRaw(HaDiscovery.soundDiscoveryTopic(p.deviceId),
+                HaDiscovery.soundConfigPayload(p.deviceId, p.deviceName), 1, retained = true)
+        }
     }
 
     // Combined presence = Meta face detection OR (when enhanced) recent ambient

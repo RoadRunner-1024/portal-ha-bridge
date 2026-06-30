@@ -18,6 +18,7 @@ class DisplaySettingsActivity : AppCompatActivity() {
     private lateinit var prefs: Prefs
     private lateinit var swPresence: Switch
     private lateinit var swEnhancedPresence: Switch
+    private lateinit var swCoexist: Switch
     private lateinit var seekPresenceSound: SeekBar
     private lateinit var tvPresenceSound: TextView
     private lateinit var swTimeout: Switch
@@ -51,6 +52,7 @@ class DisplaySettingsActivity : AppCompatActivity() {
 
         swPresence = findViewById(R.id.sw_presence)
         swEnhancedPresence = findViewById(R.id.sw_enhanced_presence)
+        swCoexist = findViewById(R.id.sw_coexist)
         seekPresenceSound = findViewById(R.id.seek_presence_sound)
         tvPresenceSound = findViewById(R.id.tv_presence_sound)
         swTimeout = findViewById(R.id.sw_screen_timeout)
@@ -81,6 +83,17 @@ class DisplaySettingsActivity : AppCompatActivity() {
             prefs.enhancedPresenceEnabled = checked
             BridgeService.applyDisplaySettings(this)
             updateUi()
+        }
+
+        swCoexist.setOnCheckedChangeListener { _, checked ->
+            if (checked == prefs.coexistVoiceAssistant) return@setOnCheckedChangeListener
+            prefs.coexistVoiceAssistant = checked
+            BridgeService.applyDisplaySettings(this)
+            updateUi()
+            Toast.makeText(this,
+                if (checked) "Mic released for the voice assistant — sound sensor off"
+                else "Mic reclaimed — sound sensor on",
+                Toast.LENGTH_SHORT).show()
         }
 
         seekPresenceSound.progress = prefs.presenceSoundThreshold
@@ -151,15 +164,19 @@ class DisplaySettingsActivity : AppCompatActivity() {
             etMinutes.setText(prefs.screenTimeoutMinutes.toString())
         findViewById<View>(R.id.row_timeout_mins).alpha = if (prefs.screenTimeoutEnabled) 1f else 0.4f
 
-        // Enhanced presence only applies while presence detection is on.
+        swCoexist.isChecked = prefs.coexistVoiceAssistant
+
+        // Enhanced (sound) presence needs the mic — and only applies while presence
+        // detection is on — so it's unavailable while coexisting with an assistant.
+        val soundFeaturesAvailable = prefs.presenceEnabled && !prefs.coexistVoiceAssistant
         swEnhancedPresence.isChecked = prefs.enhancedPresenceEnabled
-        swEnhancedPresence.isEnabled = prefs.presenceEnabled
-        swEnhancedPresence.alpha = if (prefs.presenceEnabled) 1f else 0.4f
+        swEnhancedPresence.isEnabled = soundFeaturesAvailable
+        swEnhancedPresence.alpha = if (soundFeaturesAvailable) 1f else 0.4f
         if (seekPresenceSound.progress != prefs.presenceSoundThreshold)
             seekPresenceSound.progress = prefs.presenceSoundThreshold
         tvPresenceSound.text = soundLabel(prefs.presenceSoundThreshold)
         findViewById<View>(R.id.row_presence_sound).alpha =
-            if (prefs.presenceEnabled && prefs.enhancedPresenceEnabled) 1f else 0.4f
+            if (soundFeaturesAvailable && prefs.enhancedPresenceEnabled) 1f else 0.4f
 
         if (hasTempSensor) {
             val s = "%.1f".format(prefs.tempOffset)

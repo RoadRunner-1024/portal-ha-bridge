@@ -34,19 +34,24 @@ class SoundMonitor(
     // runs on the capture thread and must return promptly (pack + publish a frame).
     @Volatile var frameSink: ((buf: ShortArray, length: Int) -> Unit)? = null
 
+    fun isRunning() = running.get()
+
     fun start() {
+        // Idempotent + safe to re-call after stop() (coexist mode toggles us on/off
+        // live). The CAS guards against two callers double-starting the thread.
+        if (!running.compareAndSet(false, true)) return
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "RECORD_AUDIO not granted — sound level disabled. " +
                 "Run: adb shell pm grant ${context.packageName} android.permission.RECORD_AUDIO")
+            running.set(false)
             return
         }
         val minBuf = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
-        if (minBuf <= 0) { Log.w(TAG, "AudioRecord not supported"); return }
+        if (minBuf <= 0) { Log.w(TAG, "AudioRecord not supported"); running.set(false); return }
         val bufSize = minBuf * 4
-        running.set(true)
 
         Thread({
             val am = context.getSystemService(AudioManager::class.java)

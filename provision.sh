@@ -20,6 +20,8 @@
 #     ./provision.sh --apk /path/app.apk   # install a specific APK
 #     ./provision.sh --serial 821..        # target a specific device (when several are connected)
 #     ./provision.sh --set-launcher        # also set immortal as the default home launcher
+#     ./provision.sh --free-mic            # free the mic for 2-way intercom (disables Meta's "Hey Alexa")
+#     ./provision.sh --restore-mic         # undo --free-mic (re-enable "Hey Alexa")
 #
 # The APK is resolved from, in order: --apk; the build output
 # (app/build/outputs/apk/release/app-release.apk); a portal-ha-bridge.apk /
@@ -37,14 +39,16 @@ else
   C_CYAN=""; C_GREEN=""; C_RED=""; C_YEL=""; C_GREY=""; C_OFF=""
 fi
 
-SERIAL=""; APK=""; FORCE_INSTALL=0; SET_LAUNCHER=0
+SERIAL=""; APK=""; FORCE_INSTALL=0; SET_LAUNCHER=0; FREE_MIC=0; RESTORE_MIC=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --install)      FORCE_INSTALL=1 ;;
     --set-launcher) SET_LAUNCHER=1 ;;
+    --free-mic)     FREE_MIC=1 ;;
+    --restore-mic)  RESTORE_MIC=1 ;;
     --serial)       SERIAL="$2"; shift ;;
     --apk)          APK="$2"; shift ;;
-    -h|--help)      sed -n '3,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)      sed -n '3,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)              printf "%sUnknown argument: %s%s\n" "$C_RED" "$1" "$C_OFF"; exit 1 ;;
   esac
   shift
@@ -146,6 +150,27 @@ if [ -n "$API" ] && [ "$API" -lt 29 ] 2>/dev/null; then
   printf "%s  disabled com.facebook.aloha.rro.niu.android%s\n" "$C_GREEN" "$C_OFF"
 fi
 
+# Two-way intercom mic fix -- free the Portal's single mic slot (opt-in).
+# Meta's "Hey Alexa" wake detector (com.millennium) holds the far-field mic array
+# and throttles a third-party AudioRecord to ~20% of real-time, leaving the device
+# receive-only for the Portal-to-Portal intercom. Disabling it (reversible, per-user)
+# frees the mic so the device becomes two-way. It does NOT touch
+# com.facebook.portal.aiservice, so Meta face-presence + Smart-Camera framing stay.
+MILLENNIUM="com.millennium"
+HAS_MILLENNIUM=0
+if adb_cmd shell pm list packages "$MILLENNIUM" 2>/dev/null | tr -d '\r' | grep -q "$MILLENNIUM"; then HAS_MILLENNIUM=1; fi
+if [ "$FREE_MIC" -eq 1 ]; then
+  if [ "$HAS_MILLENNIUM" -eq 1 ]; then
+    adb_cmd shell pm disable-user --user 0 "$MILLENNIUM" >/dev/null 2>&1
+    printf "%s  freed mic for two-way intercom (disabled %s)%s\n" "$C_GREEN" "$MILLENNIUM" "$C_OFF"
+  else
+    printf "%s  --free-mic: %s not present - mic already free%s\n" "$C_GREY" "$MILLENNIUM" "$C_OFF"
+  fi
+elif [ "$RESTORE_MIC" -eq 1 ]; then
+  adb_cmd shell pm enable "$MILLENNIUM" >/dev/null 2>&1
+  printf "%s  restored %s (Hey Alexa) - intercom returns to receive-only%s\n" "$C_GREEN" "$MILLENNIUM" "$C_OFF"
+fi
+
 if [ "$SET_LAUNCHER" -eq 1 ]; then
   if adb_cmd shell pm list packages com.immortal.launcher 2>/dev/null | grep -q com.immortal.launcher; then
     adb_cmd shell cmd package set-home-activity com.immortal.launcher/com.immortal.launcher.HomeActivity >/dev/null 2>&1
@@ -184,6 +209,13 @@ if [ -n "$API" ] && [ "$API" -lt 29 ] 2>/dev/null; then
     printf "  %-22s %sOK (disabled)%s\n" "InstallerOverlay" "$C_GREEN" "$C_OFF"
   else
     printf "  %-22s %sSTILL ENABLED%s\n" "InstallerOverlay" "$C_RED" "$C_OFF"
+  fi
+fi
+if [ "$FREE_MIC" -eq 1 ]; then
+  if adb_cmd shell pm list packages -e "$MILLENNIUM" 2>/dev/null | tr -d '\r' | grep -q "$MILLENNIUM"; then
+    printf "  %-22s %sSTILL THROTTLED%s\n" "TwoWayMic" "$C_RED" "$C_OFF"
+  else
+    printf "  %-22s %sOK (mic freed)%s\n" "TwoWayMic" "$C_GREEN" "$C_OFF"
   fi
 fi
 
