@@ -4,6 +4,22 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → *Check for Updates*) and the provisioner both pull
 the latest GitHub release.
 
+## v1.13.0 — On-device "hey jarvis" wake word (incl. Android 10)
+
+**Added**
+- **Hands-free wake word, on-device.** This app now detects the wake phrase itself
+  (an offline **Vosk** recognizer on the mic it already holds) and triggers Jarvis
+  via portal-wake's public handoff — **no separate wake app, and it works on
+  Android 10 Portals**, which portal-assistant marks "Gen-1 only". Enable
+  **On-device wake word** in Settings → Display & Presence (downloads a ~40 MB
+  model once; the APK stays small).
+- **Editable wake phrase** (default "hey jarvis"). Vosk is grammar-based, so any
+  phrase works with no new model or retraining.
+- On **Android 10**, a background-woken assistant is denied the mic, so the app
+  briefly brings the assistant to the foreground to capture, then returns to the
+  dashboard (a short per-wake takeover). On **Android 9** it stays subtle. The
+  wake word is mutually exclusive with **Coexist** (both want the single mic).
+
 ## v1.12.0 — Set the HA token from Home Assistant
 
 **Added**

@@ -162,7 +162,7 @@ Talk between Portals on your network — hold a button, speak, and it plays out 
 
 ## Voice assistant (control by voice)
 
-Portal HA Bridge plugs into **[portal-assistant](https://github.com/rudysev/portal-assistant)** ("Jarvis", a hands-free Gemini-powered assistant) as a **tool provider**, so you can control this Portal *and your entire Home Assistant* by voice — without modifying the assistant. Say **"Hey Jarvis, …"** (wake word via the companion [portal-wake](https://github.com/rudysev/portal-wake)):
+Portal HA Bridge plugs into **[portal-assistant](https://github.com/rudysev/portal-assistant)** ("Jarvis", a hands-free Gemini-powered assistant) as a **tool provider**, so you can control this Portal *and your entire Home Assistant* by voice — without modifying the assistant. Say **"Hey Jarvis, …"** — the wake word is detected **on-device by this app** ([see below](#hands-free-wake-word)):
 
 | Say something like | What happens |
 |---|---|
@@ -174,14 +174,22 @@ Portal HA Bridge plugs into **[portal-assistant](https://github.com/rudysev/port
 It's implemented via the assistant's public `ToolContract` — an exported `ContentProvider` advertising function-calling tools (only the assistant package may invoke them). For Home Assistant it uses the REST API and can **discover any entity by name**, so it controls every device with **no need to expose entities to HA Assist**.
 
 ### Setup
-1. Install **portal-assistant** (Jarvis) and **portal-wake** on the Portal (each has a one-click installer), and give Jarvis a free Gemini API key.
+1. Install **portal-assistant** (Jarvis) on the Portal (one-click installer) and give it a free Gemini API key. *(The wake word is handled by this app — see below — so portal-wake isn't required.)*
 2. In Jarvis → **Settings → External tools**, switch on **Portal HA Bridge**.
 3. Give the bridge a Home Assistant **long-lived access token** (HA → your profile → *Long-Lived Access Tokens*) so it can control HA — two ways:
    - **From Home Assistant (recommended):** paste it into the **HA Token** entity that appears under the Portal device — no typing on the Portal, and you can do it for every Portal from HA.
    - **On the device:** the *HA token* field in Settings, next to the HA URL.
 
+### Hands-free wake word
+This app detects the wake phrase **on-device** (a small offline **Vosk** recognizer, on the mic it already holds) and triggers Jarvis via portal-wake's public handoff broadcast — **no separate wake app, and it works on Android 10 Portals**, which portal-assistant otherwise marks "Gen-1 only".
+
+- Enable **On-device wake word** in **Settings → Display & Presence**. First enable downloads a ~40 MB model once.
+- **The phrase is editable** (default "hey jarvis"), in the field under the toggle. Vosk is grammar-based, so any phrase works — no new model, no retraining.
+- **Android 9 (Portal+ 1st-gen):** wakes Jarvis subtly (its background overlay). **Android 10 (Portal / Mini):** Android denies the mic to a background-woken assistant, so the app briefly brings Jarvis to the foreground to let it hear you, then returns to the dashboard — a short per-wake screen takeover.
+- Mutually exclusive with **Coexist** below: use *this* to let the app detect the wake word, or *Coexist* to run a separate always-on wake app (e.g. portal-wake) instead.
+
 ### Coexist with a voice assistant
-The Portal has a single microphone, and an always-on wake-word listener needs it continuously. Turn on **Coexist with voice assistant** (Settings → Display & Presence) and the bridge **releases the mic**: the **Sound Level** sensor and sound-based presence turn off, and the intercom captures on-demand only while you're announcing — so the assistant can hear "Hey Jarvis" the rest of the time. (Leave it off if you're not running an external wake-word app.)
+Prefer to run a *separate* always-on wake app (e.g. [portal-wake](https://github.com/rudysev/portal-wake)) instead of this app's built-in wake word? The Portal has a single microphone, so turn on **Coexist with voice assistant** (Settings → Display & Presence) and the bridge **releases the mic**: the **Sound Level** sensor and sound-based presence turn off, and the intercom captures on-demand only while you're announcing — so the other app can hear "Hey Jarvis" the rest of the time.
 
 ---
 
