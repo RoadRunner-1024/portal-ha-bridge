@@ -59,6 +59,14 @@ class DashboardActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
         }
 
+        // Speak HA's frontend "external app" protocol so the dashboard treats us as a native
+        // wrapper (native settings entry + working voice button + no-logout auth). CAUTION: once
+        // window.externalApp exists, the frontend routes AUTH through us (getExternalAuth) — so we
+        // only inject the bridge when a long-lived token is configured to answer it. Without a token
+        // there's nothing to authenticate with, and the dashboard would hang on the loading screen.
+        if (prefs.haToken.isNotBlank())
+            webView.addJavascriptInterface(HaExternalBridge(this, webView, prefs), "externalApp")
+
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 // Grant media permissions so HA calls work inside the WebView

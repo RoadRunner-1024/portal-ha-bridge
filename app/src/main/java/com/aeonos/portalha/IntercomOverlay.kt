@@ -21,6 +21,7 @@ import android.widget.TextView
 // - Press and HOLD to announce to this button's target, release to stop.
 // - DOUBLE-TAP to toggle "move mode" (button goes solid); drag it anywhere; double-
 //   tap again to lock. Position is saved per button via onMoved.
+// - In move mode a delete target appears; dragging the button onto it removes the button.
 // - Idle opacity comes from settings; it's solid while moving or live.
 class IntercomOverlay(
     private val context: Context,
@@ -30,7 +31,14 @@ class IntercomOverlay(
     private val defaultIndex: Int,
     private val onDown: () -> Boolean,
     private val onUp: () -> Unit,
-    private val onMoved: (x: Int, y: Int) -> Unit
+    private val onMoved: (x: Int, y: Int) -> Unit,
+    // Move mode entered/exited — the service shows/hides the delete target.
+    private val onMoveMode: (active: Boolean) -> Unit = {},
+    // True if the button's centre (cx,cy) is over the delete target; the service also
+    // highlights the target as a side effect. Queried on drag and on release.
+    private val overDeleteZone: (cx: Int, cy: Int) -> Boolean = { _, _ -> false },
+    // Dropped on the delete target — the service removes this button and rebuilds.
+    private val onDelete: () -> Unit = {}
 ) {
     companion object {
         private const val TAG = "PortalHA"
@@ -109,6 +117,7 @@ class IntercomOverlay(
                         if (talking) { onUp(); talking = false }
                         moveMode = !moveMode
                         applyVisual()
+                        onMoveMode(moveMode)   // service shows/hides the delete target
                         return true
                     }
                 })
@@ -128,15 +137,23 @@ class IntercomOverlay(
                             p.x = startX + (ev.rawX - downRawX).toInt()
                             p.y = startY + (ev.rawY - downRawY).toInt()
                             runCatching { wm.updateViewLayout(view, p) }
+                            overDeleteZone(centerX(p), centerY(p))   // live-highlight the delete target
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             if (moveMode) {
+                                val moved = kotlin.math.abs(p.x - startX) + kotlin.math.abs(p.y - startY) > dp(6)
+                                if (moved && overDeleteZone(centerX(p), centerY(p))) {
+                                    // Dropped on the delete target → remove this button.
+                                    moveMode = false
+                                    onMoveMode(false)
+                                    onDelete()
+                                    return@setOnTouchListener true
+                                }
                                 onMoved(p.x, p.y)
                                 // If this was an actual drag (not the double-tap that
                                 // entered move mode), lock it back to normal and repaint
                                 // with the user's colour/opacity settings.
-                                val moved = kotlin.math.abs(p.x - startX) + kotlin.math.abs(p.y - startY) > dp(6)
-                                if (moved) { moveMode = false; applyVisual() }
+                                if (moved) { moveMode = false; applyVisual(); onMoveMode(false) }
                             } else {
                                 main.removeCallbacks(startTalkRunnable)
                                 if (talking) { onUp(); talking = false; applyVisual() }
@@ -184,6 +201,10 @@ class IntercomOverlay(
             setStroke((2 * density).toInt(), Color.parseColor("#80FFFFFF"))
         }
     }
+
+    // Button centre on screen (params origin is top-left; add half the measured size).
+    private fun centerX(p: WindowManager.LayoutParams) = p.x + (view?.width ?: 0) / 2
+    private fun centerY(p: WindowManager.LayoutParams) = p.y + (view?.height ?: 0) / 2
 
     // Re-read prefs (opacity) and repaint — called when the settings slider moves.
     fun refresh() = main.post { applyVisual() }

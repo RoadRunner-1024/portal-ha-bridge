@@ -204,6 +204,10 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("intercom_overlay_enabled", false)
         set(v) = sp.edit().putBoolean("intercom_overlay_enabled", v).apply()
 
+    // True once the button list has ever been written (even to empty) — so reconcile
+    // seeds the default "Talk" button only on first run, not after a deliberate delete-all.
+    fun intercomButtonsConfigured(): Boolean = sp.contains("intercom_buttons")
+
     // The configured floating talk buttons. Empty list + overlay enabled → a single
     // default "Talk → Everyone" button is shown (and seeded on first move/config).
     fun getIntercomButtons(): MutableList<IntercomButton> {

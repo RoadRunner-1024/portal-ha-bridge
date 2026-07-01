@@ -4,6 +4,32 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → *Check for Updates*) and the provisioner both pull
 the latest GitHub release.
 
+## v1.15.0 — Native Home Assistant frontend integration + talk-button drag-to-delete
+
+**Added**
+- **Native HA frontend integration.** The dashboard now speaks Home Assistant's
+  "external app" protocol (the same one the official companion app uses), so it's
+  treated as a native wrapper — no need to switch to the HA app, and the camera and
+  everything else stay:
+  - **App Configuration** entry in HA's sidebar → opens this app's settings.
+  - The HA **voice/Assist button works** and routes to your voice assistant
+    (Jarvis) — captured natively, so it works even on a plain-HTTP HA where the
+    browser mic is normally blocked.
+  - **No-login / no-logout auth** — the dashboard authenticates with your saved
+    long-lived token, so no sign-in and it won't drop the session.
+  - Only activates when a long-lived token is set (Settings → HA token); otherwise
+    the dashboard uses the normal web login.
+- **Drag-to-delete talk buttons.** Double-tap a talk button to enter move mode; a
+  circular ✕ target appears at the bottom of the screen. Drag the button onto it
+  (it highlights red) and release to delete that button.
+
+**Fixed**
+- **Removed talk buttons now actually disappear.** Editing the talk buttons in
+  settings reliably reconciles the floating overlays (previously a removed button
+  could linger — and a transparent/low-opacity one became an invisible touch trap
+  that blocked closing Home Assistant popups). Deleting the *last* button no longer
+  re-seeds the default "Talk" button.
+
 ## v1.14.1 — Wake-word accuracy: confidence gating + contamination reject
 
 **Fixed**

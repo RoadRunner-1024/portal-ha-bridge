@@ -61,6 +61,11 @@ class BridgeService : Service() {
         fun intercomStartTalk(target: String?): Boolean = instance?.intercom?.startTalk(target) == true
         fun intercomStopTalk() { instance?.intercom?.stopTalk() }
 
+        // Fire the assistant hand-off on demand (e.g. the HA dashboard voice button via
+        // HaExternalBridge). Reuses the wake flow: brings the assistant up, yields the mic,
+        // reclaims it when done. No-op if the service isn't running.
+        fun requestAssist(@Suppress("UNUSED_PARAMETER") context: Context) { instance?.fireWakeHandoff() }
+
         // Re-evaluate the PTT overlays after a pref/config change.
         fun applyIntercomOverlay(context: Context) =
             context.startForegroundService(Intent(context, BridgeService::class.java)
@@ -144,6 +149,9 @@ class BridgeService : Service() {
     // Portal-to-Portal intercom (audio-only push-to-announce) + optional overlays.
     private var intercom: Intercom? = null
     private val intercomOverlays = mutableListOf<IntercomOverlay>()
+    private var deleteTarget: DeleteTargetOverlay? = null
+    private var movingCount = 0                 // talk buttons currently in move mode
+    private var shownOverlaySignature: String? = null   // config the live overlays were built from
     @Volatile private var lastVolumePercent = -1
     @Volatile private var lastVolumeMuted = false
     @Volatile private var lastBrightnessPercent = -1
@@ -1127,7 +1135,10 @@ class BridgeService : Service() {
         if (!micYieldedForWake) return
         micYieldedForWake = false
         wakeHandler.removeCallbacks(reclaimPoll)
-        if (prefs?.wakeWordEnabled == true && soundMonitor?.isRunning() == false) soundMonitor?.start()
+        // Restart the warm mic whenever we normally hold it (not just wake mode) — the sound
+        // sensor / enhanced presence need it too, and an assist-button handoff also yields it.
+        val coexist = prefs?.let { it.coexistVoiceAssistant && !it.wakeWordEnabled } ?: false
+        if (!coexist && soundMonitor?.isRunning() == false) soundMonitor?.start()
         // The assistant may still be speaking its reply; ignore wake matches briefly so
         // its audio (echoed back through the mic) can't immediately re-trigger the handoff.
         wakeDetector?.pauseMatching(3_000L)
@@ -1333,18 +1344,28 @@ class BridgeService : Service() {
         val p = prefs ?: return
         val show = p.intercomOverlayEnabled && intercom?.canTransmit() == true && dashboardForeground
         if (!show) { hideIntercomOverlays(); return }
-        if (intercomOverlays.isNotEmpty()) return   // already up
 
-        // Seed a single default "Talk → Everyone" button if none configured yet.
+        // Seed a default "Talk → Everyone" button only on first-ever use — NOT after the
+        // user deliberately deletes them all (else a deleted last button keeps coming back).
         val buttons = p.getIntercomButtons().ifEmpty {
-            mutableListOf(IntercomButton("Talk", "all")).also { p.setIntercomButtons(it) }
+            if (p.intercomButtonsConfigured()) mutableListOf()
+            else mutableListOf(IntercomButton("Talk", "all")).also { p.setIntercomButtons(it) }
         }
+        // Converge to the current config: rebuild only when it actually changed. Replaces a
+        // fragile "already up → return" that left removed buttons on screen as touch traps.
+        val sig = buttons.joinToString("|") { "${it.name}/${it.target}/${it.x}/${it.y}" }
+        if (sig == shownOverlaySignature && intercomOverlays.size == buttons.size) return
+        hideIntercomOverlays()
+        shownOverlaySignature = sig
         buttons.forEachIndexed { i, b ->
             IntercomOverlay(
                 this, b.name, b.x, b.y, i,
                 onDown = { intercom?.startTalk(b.target) == true },
                 onUp = { intercom?.stopTalk() },
-                onMoved = { x, y -> saveIntercomButtonPosition(i, x, y) }
+                onMoved = { x, y -> saveIntercomButtonPosition(i, x, y) },
+                onMoveMode = { active -> onOverlayMoveMode(active) },
+                overDeleteZone = { cx, cy -> hitTestDeleteZone(cx, cy) },
+                onDelete = { deleteIntercomButton(i) }
             ).also { intercomOverlays.add(it); it.show() }
         }
     }
@@ -1355,12 +1376,54 @@ class BridgeService : Service() {
         if (index in list.indices) {
             list[index] = list[index].copy(x = x, y = y)
             p.setIntercomButtons(list)
+            // Keep the signature in sync so a later reconcile doesn't needlessly rebuild.
+            shownOverlaySignature = list.joinToString("|") { "${it.name}/${it.target}/${it.x}/${it.y}" }
         }
+    }
+
+    // Delete-target geometry (bottom-centre) — shared by the visual target and the hit test.
+    private fun deleteZone(): Triple<Int, Int, Int> {
+        val dm = resources.displayMetrics
+        val r = (44 * dm.density).toInt()
+        return Triple(dm.widthPixels / 2, dm.heightPixels - (64 * dm.density).toInt(), r)
+    }
+
+    // A talk button entered/left move mode — show the delete target while any is moving.
+    private fun onOverlayMoveMode(active: Boolean) {
+        movingCount = (movingCount + if (active) 1 else -1).coerceAtLeast(0)
+        if (movingCount > 0) {
+            if (deleteTarget == null) {
+                val (cx, cy, r) = deleteZone()
+                deleteTarget = DeleteTargetOverlay(this, cx, cy, r * 2).also { it.show() }
+            }
+        } else {
+            deleteTarget?.hide(); deleteTarget = null
+        }
+    }
+
+    // True if a dragged button's centre is over the delete target; highlights it too.
+    private fun hitTestDeleteZone(cx: Int, cy: Int): Boolean {
+        val (zx, zy, r) = deleteZone()
+        val dx = (cx - zx).toDouble(); val dy = (cy - zy).toDouble()
+        val hit = dx * dx + dy * dy <= (r * 1.5) * (r * 1.5)   // generous drop radius
+        deleteTarget?.setActive(hit)
+        return hit
+    }
+
+    private fun deleteIntercomButton(index: Int) {
+        val p = prefs ?: return
+        val list = p.getIntercomButtons()
+        if (index in list.indices) { list.removeAt(index); p.setIntercomButtons(list) }
+        hideIntercomOverlays()          // clears move state + delete target
+        reconcileIntercomOverlays()     // rebuild from the trimmed config
     }
 
     private fun hideIntercomOverlays() {
         intercomOverlays.forEach { it.hide() }
         intercomOverlays.clear()
+        movingCount = 0
+        deleteTarget?.hide(); deleteTarget = null
+        shownOverlaySignature = null
     }
 
     private fun retained(payload: String) =
