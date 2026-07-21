@@ -110,9 +110,11 @@ class DashboardActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 view.evaluateJavascript(alwaysVisibleJs(), null)
+                view.evaluateJavascript(zoomJs(), null)
             }
             override fun onPageFinished(view: WebView, url: String) {
                 view.evaluateJavascript(alwaysVisibleJs(), null)
+                view.evaluateJavascript(zoomJs(), null)
             }
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
                 handler.proceed() // Accept self-signed certs for local HA
@@ -213,6 +215,9 @@ class DashboardActivity : AppCompatActivity() {
         if (url.isNotEmpty() && !current.startsWith(normalise(url).trimEnd('/'))) {
             loadDashboard()
         }
+        // Re-apply the dashboard zoom so a change made in Display settings takes
+        // effect on return without needing a full reload.
+        webView.evaluateJavascript(zoomJs(), null)
     }
 
     // ── Intercom (push-to-announce) ───────────────────────────────────────────
@@ -314,6 +319,12 @@ class DashboardActivity : AppCompatActivity() {
      * the visibility events (capture phase, registered before HA's bundle loads)
      * keeps the streams connected across the handoff — no reload.
      */
+    // Applies a fixed CSS zoom to the whole dashboard so HA cards render bigger.
+    // Injected on page start + finish; the inline style on <html> survives HA's
+    // in-app (SPA) navigation and only needs re-applying on a full reload.
+    private fun zoomJs(): String =
+        "try{document.documentElement.style.zoom='${prefs.dashboardZoom}';}catch(e){}"
+
     private fun alwaysVisibleJs(): String = """
         (function () {
           if (window.__phaAlwaysVisible) return; window.__phaAlwaysVisible = true;

@@ -30,6 +30,8 @@ class DisplaySettingsActivity : AppCompatActivity() {
     private lateinit var etMinutes: EditText
     private lateinit var tvPresenceStatus: TextView
     private lateinit var etTempOffset: EditText
+    private lateinit var seekDashboardZoom: SeekBar
+    private lateinit var tvDashboardZoom: TextView
     private var hasTempSensor = false
 
     // Live-sync the UI when the service changes prefs (HA commands).
@@ -50,6 +52,8 @@ class DisplaySettingsActivity : AppCompatActivity() {
     private fun soundLabel(threshold: Int) =
         "Sound threshold: $threshold" + if (liveLevel >= 0) "      (now: $liveLevel)" else ""
 
+    private fun zoomLabel(percent: Int) = "Dashboard zoom: $percent%"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
@@ -69,6 +73,8 @@ class DisplaySettingsActivity : AppCompatActivity() {
         etMinutes = findViewById(R.id.et_timeout_minutes)
         tvPresenceStatus = findViewById(R.id.tv_presence_status)
         etTempOffset = findViewById(R.id.et_temp_offset)
+        seekDashboardZoom = findViewById(R.id.seek_dashboard_zoom)
+        tvDashboardZoom = findViewById(R.id.tv_dashboard_zoom)
 
         // The temperature section only makes sense on hardware that has the sensor.
         hasTempSensor = getSystemService(android.hardware.SensorManager::class.java)
@@ -148,6 +154,20 @@ class DisplaySettingsActivity : AppCompatActivity() {
             }
             override fun onStartTrackingTouch(bar: SeekBar) = Unit
             override fun onStopTrackingTouch(bar: SeekBar) { BridgeService.applyDisplaySettings(this@DisplaySettingsActivity) }
+        })
+
+        // Dashboard zoom: SeekBar carries the zoom as a percent (50–300%); the pref
+        // stores it as a float (0.5–3.0). Applied by DashboardActivity on its next
+        // onResume / page load — no service restart needed.
+        seekDashboardZoom.progress = (prefs.dashboardZoom * 100).toInt()
+        tvDashboardZoom.text = zoomLabel(seekDashboardZoom.progress)
+        seekDashboardZoom.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, p: Int, fromUser: Boolean) {
+                tvDashboardZoom.text = zoomLabel(p)
+                if (fromUser) prefs.dashboardZoom = p / 100f
+            }
+            override fun onStartTrackingTouch(bar: SeekBar) = Unit
+            override fun onStopTrackingTouch(bar: SeekBar) = Unit
         })
 
         swTimeout.setOnCheckedChangeListener { _, checked ->
@@ -280,6 +300,10 @@ class DisplaySettingsActivity : AppCompatActivity() {
         if (seekPresenceSound.progress != prefs.presenceSoundThreshold)
             seekPresenceSound.progress = prefs.presenceSoundThreshold
         tvPresenceSound.text = soundLabel(prefs.presenceSoundThreshold)
+
+        val zoomPct = (prefs.dashboardZoom * 100).toInt()
+        if (seekDashboardZoom.progress != zoomPct) seekDashboardZoom.progress = zoomPct
+        tvDashboardZoom.text = zoomLabel(zoomPct)
         findViewById<View>(R.id.row_presence_sound).alpha =
             if (soundFeaturesAvailable && prefs.enhancedPresenceEnabled) 1f else 0.4f
 
