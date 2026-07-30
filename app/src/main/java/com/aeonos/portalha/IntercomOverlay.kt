@@ -74,6 +74,15 @@ class IntercomOverlay(
     @Volatile private var stageHidden = false
     @Volatile private var defaultPlaced = false
 
+    // Latched by hide(): a hidden overlay is dead and must never add a window again.
+    // show() adds its window in a POSTED runnable, so without this latch a
+    // hide()-before-the-post-ran was a no-op (view still null) and the post then
+    // added a window NOBODY tracked — a ghost button that no drag-to-delete or
+    // rebuild could ever remove (only an app restart). Rebuild churn (settings
+    // apply, delete-and-rebuild, dashboard resume cycles) minted one ghost per
+    // interrupted show.
+    @Volatile private var destroyed = false
+
     private val liveColor = Color.parseColor("#E53935")
 
     @Volatile private var moveMode = false
@@ -90,9 +99,10 @@ class IntercomOverlay(
 
     @SuppressLint("ClickableViewAccessibility")
     fun show() {
-        if (view != null) return
+        if (destroyed || view != null) return
         if (!Settings.canDrawOverlays(context)) { Log.w(TAG, "intercom overlay: no overlay permission"); return }
         main.post {
+            if (destroyed || view != null) return@post
             runCatching {
                 val density = context.resources.displayMetrics.density
                 fun dp(v: Int) = (v * density).toInt()
@@ -225,13 +235,17 @@ class IntercomOverlay(
     fun refresh() = main.post { applyVisual() }
 
     fun hide() {
-        // Drop a staged outgoing window too, or an interrupted refloat would leak it.
-        pendingOld?.let { o -> pendingOld = null; main.post { runCatching { wm.removeView(o) } } }
-        stageHidden = false
-        val v = view ?: return
-        view = null; params = null
-        main.removeCallbacks(startTalkRunnable)
-        main.post { runCatching { wm.removeView(v) } }
+        // Latch FIRST: any queued show() post sees this and skips its addView.
+        destroyed = true
+        // Teardown on the main thread, AFTER any already-queued show() post — so
+        // whichever windows actually got added (current, staged, outgoing) are
+        // all removed regardless of interleaving.
+        main.post {
+            main.removeCallbacks(startTalkRunnable)
+            stageHidden = false
+            pendingOld?.let { o -> pendingOld = null; runCatching { wm.removeView(o) } }
+            view?.let { v -> view = null; params = null; runCatching { wm.removeView(v) } }
+        }
     }
 
     /**
@@ -243,7 +257,7 @@ class IntercomOverlay(
      */
     fun prepareRefloat(onReady: Runnable) {
         val old = view
-        if (old == null || pendingOld != null) { onReady.run(); return }
+        if (destroyed || old == null || pendingOld != null) { onReady.run(); return }
         pendingOld = old
         view = null; params = null
         stageHidden = true

@@ -105,7 +105,12 @@ class BridgeService : Service() {
         //     -a com.aeonos.portalha.SET_COVER --es cover snapshot
         private const val ACTION_SET_COVER = "com.aeonos.portalha.SET_COVER"
         private const val EXTRA_COVER = "cover"
-        private const val TWOWAY_IDLE_MS = 2_000L      // drop the reply channel after ~2 s of silence
+        // Reply-channel silence timeout now lives in Prefs.twoWayIdleSecs (slider);
+        // the idle check reads it live so slider moves apply to an open channel.
+
+        // Opt-in daily update check: evaluated on an hourly tick (cheap), fires
+        // when the persisted due time passes and the screen is on.
+        private const val UPDATE_TICK_MS = 3_600_000L
 
         // Live reference to the running service so the dashboard UI + the PTT
         // overlay can query peers and drive the intercom directly (low latency,
@@ -213,6 +218,8 @@ class BridgeService : Service() {
     private var audioReceiver: BroadcastReceiver? = null
     private var alexaTurnDoneReceiver: BroadcastReceiver? = null
     private var debugWakeReceiver: BroadcastReceiver? = null
+    private var debugAudioReceiver: BroadcastReceiver? = null
+    private var debugUpdateReceiver: BroadcastReceiver? = null
     private var sensorBridge: SensorBridge? = null
     private var soundMonitor: SoundMonitor? = null
     private var dialServer: DialServer? = null
@@ -292,7 +299,10 @@ class BridgeService : Service() {
         when {
             !rtspNeedsRestart || dashboardForeground -> {}   // healed or already back
             p == null || !p.cameraServiceEnabled || !p.cameraOn || !p.streamEnabled -> {}
-            !screenOn -> {}
+            // Screen dark: don't act (never wake the room), but KEEP polling — a
+            // screen-on resumes the LAUNCHER when it stole the front, not us, so
+            // dropping here left the stream dead until a human intervened.
+            !screenOn -> scheduleDashboardReturn()
             inCall || micYieldedForWake || TvAppActivity.isShowing() || falconPlaying() ->
                 scheduleDashboardReturn()                    // busy — check again later
             else -> {
@@ -469,6 +479,9 @@ class BridgeService : Service() {
             it.alexaPhrase = if (p.alexaWakeEnabled) p.alexaWakePhrase else ""
         }
         soundMonitor?.wakeSink = { buf, n -> wakeDetector?.feed(buf, n) }
+        // RTSP audio tap: resolved through the streamer on every chunk, so stream
+        // restarts re-tap automatically. No-op (null micTap) when audio is off.
+        soundMonitor?.streamSink = { buf, n -> rtspStreamer?.micTap?.feed(buf, n) }
         twoWay = TwoWayEngine(this, { intercom }, { talking ->
             lastTwoWayActivityMs = System.currentTimeMillis()
             twoWayOrb?.setTransmitting(talking)   // my orb warms blue→orange while I hold the floor
@@ -491,6 +504,9 @@ class BridgeService : Service() {
             // is what runs at boot; reconcileWake only fires on a settings APPLY.
             if (p.alexaWakeEnabled) scheduleFalconWarmup()
             reconcileIntercomOverlays()
+            // Daily auto update check (opt-in): first evaluation 2 min after boot,
+            // then hourly — maybeAutoUpdateCheck gates on the persisted due time.
+            wakeHandler.postDelayed(autoUpdateTick, 120_000L)
         }, 1_500L)
 
         if (p.cameraServiceEnabled) {
@@ -644,6 +660,8 @@ class BridgeService : Service() {
         audioReceiver?.let { unregisterReceiver(it) }
         alexaTurnDoneReceiver?.let { runCatching { unregisterReceiver(it) } }
         debugWakeReceiver?.let { runCatching { unregisterReceiver(it) } }
+        debugAudioReceiver?.let { runCatching { unregisterReceiver(it) } }
+        debugUpdateReceiver?.let { runCatching { unregisterReceiver(it) } }
         sensorBridge?.stop()
         soundMonitor?.stop()
         wakeDetector?.stop()
@@ -665,6 +683,7 @@ class BridgeService : Service() {
             runCatching { getSystemService(AudioManager::class.java)?.unregisterAudioPlaybackCallback(cb) }
             callWatchCallback = null
         }
+        wakeHandler.removeCallbacks(autoUpdateTick)
         intercom?.release()
         hideIntercomOverlays()
         instance = null
@@ -711,6 +730,13 @@ class BridgeService : Service() {
                         screenOn = true
                         lastActivityMs = System.currentTimeMillis()  // restart the off-timer
                         publishState("ON"); reclaimForeground()
+                        // The camera can die silently while the screen is dark (launcher
+                        // steal + eviction, events lost to log pruning) — with the flag
+                        // never set, ensureCamera would no-op on a dead stream. Verify.
+                        if (rtspStreamer?.isStreaming == true) {
+                            wakeHandler.removeCallbacks(rtspHealthCheck)
+                            wakeHandler.postDelayed(rtspHealthCheck, RTSP_HEALTH_CHECK_MS)
+                        }
                     }
                     Intent.ACTION_SCREEN_OFF -> { screenOn = false; publishState("OFF") }
                 }
@@ -813,6 +839,52 @@ class BridgeService : Service() {
         runCatching {
             registerReceiver(debugWakeReceiver, IntentFilter("com.aeonos.portalha.DEBUG_ALEXA_WAKE"))
         }
+
+        // Debug: toggle experimental RTSP audio from adb (restarts the stream):
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_STREAM_AUDIO --ez on true
+        debugAudioReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val on = intent.getBooleanExtra("on", true)
+                val p = prefs ?: return
+                p.streamAudioEnabled = on
+                Log.i(TAG, "camera: DEBUG_STREAM_AUDIO -> $on (restarting stream)")
+                commandExecutor.submit {
+                    if (rtspStreamer?.isStreaming == true) {
+                        rtspStreamer?.stop()
+                        runCatching { Thread.sleep(700) }   // port release, as in restart()
+                    }
+                    applyCameraState(p)
+                }
+            }
+        }
+        runCatching {
+            registerReceiver(debugAudioReceiver, IntentFilter("com.aeonos.portalha.DEBUG_STREAM_AUDIO"))
+        }
+
+        // Debug: exercise the auto-update prompt from adb. With extras, show the
+        // dialog with that content (pure UI smoke test); without extras, run a REAL
+        // check right now, bypassing the toggle and schedule (prompts only if GitHub
+        // actually has a newer, un-skipped version):
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_UPDATE_PROMPT [--es version 9.9 --es notes "…"]
+        debugUpdateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val v = intent.getStringExtra("version")
+                if (v == null) {
+                    Log.i(TAG, "update: DEBUG_UPDATE_PROMPT -> forcing real check now")
+                    maybeAutoUpdateCheck(force = true)
+                    return
+                }
+                startActivity(Intent(this@BridgeService, UpdatePromptActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(UpdatePromptActivity.EXTRA_VERSION, v)
+                    .putExtra(UpdatePromptActivity.EXTRA_NOTES, intent.getStringExtra("notes") ?: "")
+                    .putExtra(UpdatePromptActivity.EXTRA_APK_URL, intent.getStringExtra("apkUrl") ?: ""))
+            }
+        }
+        runCatching {
+            registerReceiver(debugUpdateReceiver, IntentFilter("com.aeonos.portalha.DEBUG_UPDATE_PROMPT"))
+        }
+
     }
 
     // ── MQTT loop ─────────────────────────────────────────────────────────────
@@ -1228,10 +1300,10 @@ class BridgeService : Service() {
                 }
                 r.rotationOffset = p.streamRotation
                 if (!r.isStreaming) {
-                    // withAudio=false → NoAudioSource: the RTSP stream must NOT open
-                    // the mic, or it starves/garbles Portal calls. (Audio is silent/
-                    // useless anyway; a real mic-share is a future follow-up.)
-                    val ok = r.start(1280, 720, 15, 2_000_000, withAudio = false)
+                    // withAudio taps SoundMonitor's capture (MicTapSource) — the
+                    // stream itself never opens the mic, so calls/Alexa/wake word
+                    // are unaffected; their yields just mute the track briefly.
+                    val ok = r.start(1280, 720, 15, 2_000_000, withAudio = p.streamAudioEnabled)
                     cameraActive = ok
                     publishRaw(HaDiscovery.cameraStateTopic(p.deviceId), if (ok) "ON" else "OFF", 1, retained = true)
                     if (ok) noteRtspStarted() else Log.w(TAG, "RTSP failed to start")
@@ -1451,13 +1523,71 @@ class BridgeService : Service() {
         }
     }
 
+    // ── Daily auto update check (opt-in) ─────────────────────────────────────
+
+    private val autoUpdateTick = object : Runnable {
+        override fun run() {
+            maybeAutoUpdateCheck()
+            wakeHandler.postDelayed(this, UPDATE_TICK_MS)
+        }
+    }
+
+    // Once a day at a drifting random hour: ask GitHub for the latest release and,
+    // if it's newer and not the version the user skipped, pop the update prompt
+    // (changelog + Update now / Skip this version / Later). The prompt only lands
+    // while the screen is on and no call is up — otherwise the due check just
+    // waits for the next hourly tick.
+    private fun maybeAutoUpdateCheck(force: Boolean = false) {
+        val p = prefs ?: return
+        if (!force) {
+            if (!p.autoUpdateCheck) return
+            val now = System.currentTimeMillis()
+            if (p.nextUpdateCheckMs == 0L) {
+                // First arming: land at a random point in the next 24 h — staggers the
+                // fleet so the Portals don't all hit GitHub at the same minute.
+                p.nextUpdateCheckMs = now + (Math.random() * 24 * 3_600_000L).toLong()
+                Log.i(TAG, "update: auto-check armed, first check in ${(p.nextUpdateCheckMs - now) / 60_000L} min")
+                return
+            }
+            if (now < p.nextUpdateCheckMs) return
+            if (!screenOn || inCall) return
+        }
+        val now = System.currentTimeMillis()
+        Thread({
+            val rel = runCatching { Updater.fetchLatest() }.getOrNull()
+            wakeHandler.post {
+                if (rel == null) {
+                    p.nextUpdateCheckMs = now + 2 * 3_600_000L   // network hiccup — retry in 2 h
+                    return@post
+                }
+                // Next check 20–28 h out: keeps roughly daily cadence while the
+                // hour drifts randomly across days.
+                p.nextUpdateCheckMs = now + 20 * 3_600_000L + (Math.random() * 8 * 3_600_000L).toLong()
+                if (!Updater.isNewer(rel.version, BuildConfig.VERSION_NAME)) return@post
+                if (rel.version == p.skippedUpdateVersion) {
+                    Log.i(TAG, "update: v${rel.version} available but skipped by user")
+                    return@post
+                }
+                Log.i(TAG, "update: v${rel.version} available (auto check) — prompting")
+                runCatching {
+                    startActivity(Intent(this@BridgeService, UpdatePromptActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        .putExtra(UpdatePromptActivity.EXTRA_VERSION, rel.version)
+                        .putExtra(UpdatePromptActivity.EXTRA_NOTES, rel.notes)
+                        .putExtra(UpdatePromptActivity.EXTRA_APK_URL, rel.apkUrl))
+                }
+            }
+        }, "portal-ha-update-check").also { it.isDaemon = true }.start()
+    }
+
     // While the channel is open, drop it on a short burst of true silence — nobody talking
     // locally (engine has no floor) AND nothing coming in. Keeps the timer fresh while I talk.
     private val twoWayIdleCheck = object : Runnable {
         override fun run() {
             if (!twoWayChannelOpen) return
             if (twoWay?.talking == true) lastTwoWayActivityMs = System.currentTimeMillis()
-            if (System.currentTimeMillis() - lastTwoWayActivityMs > TWOWAY_IDLE_MS) {
+            val idleMs = (prefs?.twoWayIdleSecs ?: 2).coerceIn(2, 60) * 1_000L
+            if (System.currentTimeMillis() - lastTwoWayActivityMs > idleMs) {
                 Log.i(TAG, "2way channel: silent — closing")
                 intercom?.closeTwoWayChannel()
             } else wakeHandler.postDelayed(this, 400L)
@@ -2420,6 +2550,34 @@ class BridgeService : Service() {
 
     // ── Intercom PTT overlays (named floating buttons) ────────────────────────
 
+    // PTT press with 2-way on: show the orb ORANGE for the announce itself — the
+    // "channel ready, you're live" cue, in the same visual language as holding the
+    // floor during the hands-free reply phase. Without 2-way the old minimal look
+    // (red button only) is kept. Never over a live call.
+    private fun onPttTalkStarted() {
+        if (intercom?.twoWayEnabled != true || inCall) return
+        wakeHandler.post {
+            if (twoWayOrb == null) twoWayOrb = AnnounceOrbOverlay(this, blue = true, interactive = true)
+                .also { it.onTap = { intercom?.closeTwoWayChannel() } }   // tap the Portal to hang up
+            twoWayOrb?.show()
+            twoWayOrb?.setLive(true)
+            twoWayOrb?.setTransmitting(true)   // blue base warms to orange ≈ instantly
+        }
+    }
+
+    // PTT release: broadcast announces hand the SAME orb to the reply channel that
+    // stopTalk() just opened (it cools orange→blue = "listening for replies");
+    // direct/peer announces have no reply channel, so their orb goes away.
+    private fun onPttTalkStopped(target: String?) {
+        val handsOffToReply = intercom?.twoWayEnabled == true &&
+            (target.isNullOrEmpty() || target == "all")
+        wakeHandler.post {
+            twoWayOrb?.setTransmitting(false)
+            // Keep the orb if an (earlier) reply channel still owns it.
+            if (!handsOffToReply && !twoWayChannelOpen) { twoWayOrb?.hide(); twoWayOrb = null }
+        }
+    }
+
     // Show the configured talk buttons only while: the feature is on, this Portal
     // can transmit (not receive-only), AND the dashboard is in front. Otherwise
     // hide them — they don't float over other apps / the home screen.
@@ -2446,8 +2604,12 @@ class BridgeService : Service() {
         buttons.forEachIndexed { i, b ->
             IntercomOverlay(
                 this, b.name, b.x, b.y, i,
-                onDown = { intercom?.startTalk(b.target) == true },
-                onUp = { intercom?.stopTalk() },
+                onDown = {
+                    val ok = intercom?.startTalk(b.target) == true
+                    if (ok) onPttTalkStarted()
+                    ok
+                },
+                onUp = { intercom?.stopTalk(); onPttTalkStopped(b.target) },
                 onMoved = { x, y -> saveIntercomButtonPosition(i, x, y) },
                 onMoveMode = { active -> onOverlayMoveMode(active) },
                 overDeleteZone = { cx, cy -> hitTestDeleteZone(cx, cy) },

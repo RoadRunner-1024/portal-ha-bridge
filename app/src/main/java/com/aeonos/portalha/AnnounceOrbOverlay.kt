@@ -36,6 +36,14 @@ class AnnounceOrbOverlay(
     @Volatile private var view: OrbView? = null
     @Volatile var onTap: (() -> Unit)? = null
 
+    // Sticky state: show() attaches the view in a POSTED runnable, so a setter
+    // called right after show() used to land on view==null and vanish — a PTT
+    // press's single setTransmitting(true) was lost and the orb stayed blue.
+    // (The hands-free path masked this by re-sending state every mic frame.)
+    @Volatile private var lastLive = false
+    @Volatile private var lastLevel = 0
+    @Volatile private var lastTransmitting = false
+
     fun show() {
         if (!Settings.canDrawOverlays(context)) return
         main.post {
@@ -52,15 +60,17 @@ class AnnounceOrbOverlay(
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     flags, PixelFormat.TRANSLUCENT)
                 if (interactive) v.setOnClickListener { onTap?.invoke() }
+                // Apply any state set between show() and this post running.
+                v.live = lastLive; v.level = lastLevel; v.transmitting = lastTransmitting
                 view = v
                 wm.addView(v, lp)
             }
         }
     }
 
-    fun setLive(live: Boolean) { view?.live = live }
-    fun setLevel(level: Int) { view?.level = level }
-    fun setTransmitting(t: Boolean) { view?.transmitting = t }
+    fun setLive(live: Boolean) { lastLive = live; view?.live = live }
+    fun setLevel(level: Int) { lastLevel = level; view?.level = level }
+    fun setTransmitting(t: Boolean) { lastTransmitting = t; view?.transmitting = t }
 
     fun hide() {
         main.post {

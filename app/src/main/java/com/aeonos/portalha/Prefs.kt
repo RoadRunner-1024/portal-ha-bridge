@@ -178,6 +178,15 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("alexa_wake_enabled", false)
         set(v) = sp.edit().putBoolean("alexa_wake_enabled", v).apply()
 
+    // EXPERIMENTAL: put the mic's audio on the RTSP camera stream (one-way
+    // listen-in from HA). Tapped from SoundMonitor's capture — no second
+    // AudioRecord — so it mutes automatically while the mic is yielded to
+    // Alexa or a call. Off by default: this makes the camera entity a live
+    // room microphone.
+    var streamAudioEnabled: Boolean
+        get() = sp.getBoolean("stream_audio_enabled", false)
+        set(v) = sp.edit().putBoolean("stream_audio_enabled", v).apply()
+
     // One-time "Alexa needs USB provisioning" notice, shown on the first settings visit
     // after landing on an Alexa-capable build (and only when falcon isn't installed —
     // an app update can't provision Amazon's client, that step is USB-only).
@@ -203,6 +212,27 @@ class Prefs(private val context: Context) {
     var twoWayExperimental: Boolean
         get() = sp.getBoolean("two_way_experimental", false)
         set(v) = sp.edit().putBoolean("two_way_experimental", v).apply()
+
+    // 2-way reply window: seconds of true silence (nobody talking either way)
+    // before the open reply channel closes itself. Read live by the idle check.
+    var twoWayIdleSecs: Int
+        get() = sp.getInt("two_way_idle_secs", 2)
+        set(v) = sp.edit().putInt("two_way_idle_secs", v.coerceIn(2, 60)).apply()
+
+    // Opt-in daily update check: once a day at a drifting random time the Portal
+    // asks GitHub for the latest release and prompts (changelog + Update / Skip
+    // this version / Later). skippedUpdateVersion suppresses re-prompts for a
+    // version the user declined; nextUpdateCheckMs persists the cadence across
+    // restarts so a reboot doesn't re-roll the schedule.
+    var autoUpdateCheck: Boolean
+        get() = sp.getBoolean("auto_update_check", false)
+        set(v) = sp.edit().putBoolean("auto_update_check", v).apply()
+    var skippedUpdateVersion: String
+        get() = sp.getString("skipped_update_version", "") ?: ""
+        set(v) = sp.edit().putString("skipped_update_version", v).apply()
+    var nextUpdateCheckMs: Long
+        get() = sp.getLong("next_update_check_ms", 0L)
+        set(v) = sp.edit().putLong("next_update_check_ms", v).apply()
 
     // Assistant package the wake handoff broadcast targets (portal-wake's contract).
     var wakeAssistantPackage: String

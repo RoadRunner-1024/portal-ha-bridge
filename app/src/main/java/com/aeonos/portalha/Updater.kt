@@ -21,9 +21,10 @@ object Updater {
     private const val REPO = "RoadRunner-1024/portal-ha-bridge"
     private const val APK_ASSET = "portal-ha-bridge.apk"
 
-    data class Release(val version: String, val apkUrl: String)
+    data class Release(val version: String, val apkUrl: String, val notes: String = "")
 
-    // Fetch the latest release's version (tag, "v" stripped) + APK download URL.
+    // Fetch the latest release's version (tag, "v" stripped), APK download URL,
+    // and the release notes body (markdown — shown as the changelog in prompts).
     // Runs on a background thread; throws on network/parse error.
     fun fetchLatest(): Release {
         val conn = (URL("https://api.github.com/repos/$REPO/releases/latest").openConnection()
@@ -43,7 +44,7 @@ object Updater {
             }
             if (apkUrl.isBlank())
                 apkUrl = "https://github.com/$REPO/releases/latest/download/$APK_ASSET"
-            return Release(tag.removePrefix("v").removePrefix("V"), apkUrl)
+            return Release(tag.removePrefix("v").removePrefix("V"), apkUrl, json.optString("body"))
         } finally { conn.disconnect() }
     }
 

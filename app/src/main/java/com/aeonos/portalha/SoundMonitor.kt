@@ -38,6 +38,10 @@ class SoundMonitor(
     // mic is held (unlike frameSink, which is only attached during an intercom announce).
     @Volatile var wakeSink: ((buf: ShortArray, length: Int) -> Unit)? = null
 
+    // Continuous tap for the RTSP audio stream (MicTapSource). Same contract as
+    // wakeSink; MicTapSource fills the gaps with silence when this goes quiet.
+    @Volatile var streamSink: ((buf: ShortArray, length: Int) -> Unit)? = null
+
     // Audio session id of our current AudioRecord (-1 when not capturing). Lets the
     // wake handoff tell OUR recording apart from the assistant's in the system's active
     // recording list, without depending on release/acquire timing.
@@ -118,6 +122,7 @@ class SoundMonitor(
                 if (n > 0) {
                     frameSink?.invoke(buf, n)   // forward to the intercom if announcing
                     wakeSink?.invoke(buf, n)    // forward to the wake-word detector if enabled
+                    streamSink?.invoke(buf, n)  // forward to the RTSP audio tap if streaming
                     for (i in 0 until n) sumSq += buf[i].toLong() * buf[i]
                     count += n
                     val now = System.currentTimeMillis()

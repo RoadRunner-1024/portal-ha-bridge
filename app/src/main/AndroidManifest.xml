@@ -125,6 +125,13 @@
             android:name=".IntercomButtonsActivity"
             android:exported="false" />
 
+        <!-- Daily auto-update prompt: a dialog over whatever is showing. -->
+        <activity
+            android:name=".UpdatePromptActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.AppCompat.Dialog.Alert" />
+
         <service
             android:name=".BridgeService"
             android:exported="false"

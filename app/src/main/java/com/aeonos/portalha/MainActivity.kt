@@ -39,6 +39,14 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_grant).setOnClickListener { grantNextMissing() }
 
         findViewById<Button>(R.id.btn_check_update).setOnClickListener { checkForUpdate(it as Button) }
+        findViewById<Switch>(R.id.sw_auto_update).apply {
+            isChecked = prefs.autoUpdateCheck
+            setOnCheckedChangeListener { _, checked ->
+                prefs.autoUpdateCheck = checked
+                // Re-roll the schedule on enable so the first check lands within 24 h.
+                if (checked) prefs.nextUpdateCheckMs = 0L
+            }
+        }
 
         val etHost = findViewById<EditText>(R.id.et_host)
         val etPort = findViewById<EditText>(R.id.et_port)

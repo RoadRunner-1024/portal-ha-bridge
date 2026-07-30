@@ -60,6 +60,23 @@
             android:layout_height="wrap_content"
             android:text="Check for Updates"
             android:backgroundTint="#37474F"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_auto_update"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Check for updates daily"
+            android:textSize="16sp"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Once a day, at a random time, this Portal checks GitHub for a new version. If one is found you'll be asked — with the changelog — whether to update, and you can skip a version you don't want."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
             android:layout_marginBottom="20dp" />
 
         <!-- MQTT Settings -->

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/tv_update_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="@color/onSurface"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tv_update_sub"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="@color/hint"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Release notes (changelog) — capped height, scrolls internally. -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="260dp"
+        android:background="@color/surface"
+        android:padding="8dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/tv_update_notes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:textColor="@color/onSurface"
+            android:padding="8dp" />
+    </ScrollView>
+
+    <Button
+        android:id="@+id/btn_update_now"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Update now"
+        android:backgroundTint="@color/colorPrimary"
+        android:layout_marginBottom="8dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_update_skip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Skip this version"
+            android:backgroundTint="#37474F"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/btn_update_later"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Later"
+            android:backgroundTint="#37474F" />
+    </LinearLayout>
+</LinearLayout>

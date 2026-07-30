@@ -93,9 +93,23 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="When on, any intercom announcement opens a hands-free reply channel — recipients can just talk back (one at a time). The channel auto-closes after a minute of silence."
+            android:text="When on, any intercom announcement opens a hands-free reply channel — recipients can just talk back (one at a time). How long the channel waits in silence before closing is set below."
             android:textSize="12sp"
             android:textColor="@color/hint"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tv_two_way_timeout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="14sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_two_way_timeout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="58"
             android:layout_marginBottom="24dp" />
 
         <!-- Sound -->

@@ -96,6 +96,23 @@
             android:textColor="@color/hint"
             android:layout_marginBottom="12dp" />
 
+        <Switch
+            android:id="@+id/sw_stream_audio"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Stream audio (experimental)"
+            android:textSize="15sp"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Adds the room's sound to the camera stream (listen-in from Home Assistant). Shares the wake-word microphone, so audio goes quiet for a few seconds while Alexa or a call has the mic. This makes the camera a live room microphone — leave off if that's not wanted."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="12dp" />
+
         <Button
             android:id="@+id/btn_rotate"
             android:layout_width="match_parent"

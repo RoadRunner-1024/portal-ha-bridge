@@ -2,11 +2,9 @@ package com.aeonos.portalha
 
 import android.content.Context
 import android.media.MediaCodecInfo
-import android.media.MediaRecorder
 import android.util.Log
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.video.CameraHelper
-import com.pedro.library.util.sources.audio.MicrophoneSource
 import com.pedro.library.util.sources.audio.NoAudioSource
 import com.pedro.library.util.sources.video.Camera2Source
 import com.pedro.rtspserver.RtspServerStream
@@ -28,6 +26,11 @@ class RtspStreamer(private val context: Context, private val port: Int = 8554) :
     // BridgeService uses it to flag recovery; without it these states were
     // invisible and the stream stayed dead until an app restart.
     @Volatile var onStreamDead: ((String) -> Unit)? = null
+    // Live mic tap when the stream carries audio (see MicTapSource); BridgeService
+    // resolves this through the streamer on every SoundMonitor chunk, so stream
+    // restarts re-tap automatically without rewiring.
+    @Volatile var micTap: MicTapSource? = null
+        private set
     // Manual base offset (deg, 0/90/180/270) from the ROTATE button. 0 = camera
     // native landscape. Corrects the base on top of the accelerometer auto value.
     @Volatile var rotationOffset = 0
@@ -63,14 +66,19 @@ class RtspStreamer(private val context: Context, private val port: Int = 8554) :
             // (empty here), so build the source explicitly on FRONT.
             val video = Camera2Source(context)
             if (video.getCameraFacing() != CameraHelper.Facing.FRONT) video.switchCamera()
-            // NoAudioSource does NOT open the mic — critical so the RTSP stream
-            // doesn't hold the mic and starve/garble Portal calls (and so it doesn't
-            // fight the SoundMonitor). prepareAudio() is still called below to satisfy
-            // startStream(); that leaves an empty AAC track in the SDP (harmless;
-            // HA/WebRTC uses #video=copy). withAudio kept for a future real mic-share.
-            val audio = if (withAudio) MicrophoneSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            // Neither source opens the mic — critical so the RTSP stream doesn't
+            // hold the capture slot and starve/garble Portal calls or fight the
+            // SoundMonitor. withAudio uses MicTapSource: a copy of SoundMonitor's
+            // capture (16 kHz mono, matching prepareAudio below), silence-filled
+            // while the mic is yielded. Without audio, prepareAudio() is still
+            // called to satisfy startStream() — an empty AAC track in the SDP.
+            val audio = if (withAudio) MicTapSource().also { micTap = it }
                         else NoAudioSource()
             val s = RtspServerStream(context, port, this, video, audio)
+            // Kill the library's per-packet logging ("BaseRtpSocket: wrote packet…",
+            // ~150 lines/s with a UDP client like go2rtc attached) — it floods the
+            // device log so hard that chatty prunes OUR diagnostics away.
+            s.getStreamClient().setLogs(false)
             stream = s
             // Pass the LANDSCAPE capture dims + rotation; prepareVideo swaps the
             // ENCODER size itself for 90/270 (don't pre-swap — that double-swaps).
@@ -140,6 +148,7 @@ class RtspStreamer(private val context: Context, private val port: Int = 8554) :
 
     fun stop() {
         isStreaming = false
+        micTap = null
         runCatching { stream?.stopStream() }
         stream = null
         Log.i(TAG, "RTSP streaming stopped")

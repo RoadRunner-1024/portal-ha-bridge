@@ -4,6 +4,47 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → *Check for Updates*) and the provisioner both pull
 the latest GitHub release.
 
+## v1.18.0 — Listen-in audio, self-updating fleet, intercom polish
+
+**Added**
+- **Camera stream audio (experimental, off by default).** "Stream audio" in
+  Camera Settings adds the room's sound to the RTSP stream — listen-in from
+  Home Assistant (the settings page shows the right card config for audio).
+  It taps the wake-word microphone rather than opening its own, so calls,
+  Alexa and "hey jarvis" are unaffected; the track just goes quiet for a few
+  seconds while they hold the mic. Turning it on makes the camera a live room
+  microphone — it's per-device and off unless you choose it.
+- **Daily update checks (opt-in).** "Check for updates daily" in the main
+  settings: once a day, at a random time per Portal, the app checks GitHub.
+  When a new version appears you get a prompt with the release notes —
+  **Update now**, **Skip this version** (never asks again for that one), or
+  **Later** (asks again tomorrow).
+- **2-way reply timeout slider.** How long the hands-free reply channel stays
+  open in silence is now adjustable (2–60 s) in Intercom Settings. It was
+  hardcoded to ~2 s — and the old settings text claiming "a minute" now tells
+  the truth.
+- **Talk button shows the Portal orb (2-way).** Holding a talk button brings
+  up the orb in orange — channel ready, you're live — and on release of a
+  broadcast announce it cools to blue as the reply window opens. Same orb,
+  one continuous gesture.
+
+**Fixed**
+- **Ghost talk buttons.** Rapid rebuilds (settings changes, deleting a button,
+  dashboard transitions) could leak untracked button windows that drag-to-❌
+  could never remove — only an app restart cleared them. The overlay teardown
+  is now ordering-proof; ghosts can't be minted.
+- **Orb stuck blue on push-to-talk.** The one-shot "transmitting" state could
+  arrive before the orb's window existed and was lost; orb state is now sticky
+  across window creation.
+- **Stranded-dashboard auto-return hardened.** The return check no longer
+  gives up when the screen is dark (a screen-wake resumes the launcher, not
+  the app, so nothing else would have re-checked), and every screen-on now
+  verifies the camera actually runs — recovering evictions whose events were
+  lost while the screen was off.
+- **RTSP log flood silenced.** The streaming library logged every packet
+  (~150 lines/s with a connected client), drowning the device log and getting
+  the app's own diagnostics pruned.
+
 ## v1.17.2 — Camera stream self-heal + call awareness
 
 **Fixed**

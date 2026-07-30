@@ -69,6 +69,20 @@ class IntercomSettingsActivity : AppCompatActivity() {
             BridgeService.setTwoWayEnabled(this, checked)
         }
 
+        // Reply timeout: how many seconds of silence keep the reply channel open.
+        // Read live by the service's idle check, so it applies immediately —
+        // even to a channel that's already open.
+        val seekReply = findViewById<SeekBar>(R.id.seek_two_way_timeout)
+        val tvReply = findViewById<TextView>(R.id.tv_two_way_timeout)
+        fun replyLabel(s: Int) { tvReply.text = "Reply timeout: closes after ${s}s of silence" }
+        seekReply.progress = (prefs.twoWayIdleSecs - 2).coerceIn(0, 58)
+        replyLabel(prefs.twoWayIdleSecs)
+        seekReply.setOnSeekBarChangeListener(simpleSeek { p ->
+            val secs = p + 2   // slider 0..58 → 2..60 s
+            prefs.twoWayIdleSecs = secs
+            replyLabel(secs)
+        })
+
         // Announcement volume.
         val seekVol = findViewById<SeekBar>(R.id.seek_intercom_volume)
         val tvVol = findViewById<TextView>(R.id.tv_intercom_volume)
