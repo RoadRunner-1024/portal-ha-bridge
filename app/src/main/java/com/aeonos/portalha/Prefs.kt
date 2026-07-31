@@ -136,6 +136,12 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("enhanced_presence", false)
         set(v) = sp.edit().putBoolean("enhanced_presence", v).apply()
 
+    // CSS zoom applied to the kiosk dashboard WebView. 1.0 = normal; >1 makes the
+    // HA cards (and everything else) proportionally bigger. Adjustable in Display settings.
+    var dashboardZoom: Float
+        get() = sp.getFloat("dashboard_zoom", 1.0f)
+        set(v) = sp.edit().putFloat("dashboard_zoom", v.coerceIn(0.5f, 3.0f)).apply()
+
     var presenceSoundThreshold: Int
         get() = sp.getInt("presence_sound_threshold", 8)
         set(v) = sp.edit().putInt("presence_sound_threshold", v.coerceIn(0, 100)).apply()

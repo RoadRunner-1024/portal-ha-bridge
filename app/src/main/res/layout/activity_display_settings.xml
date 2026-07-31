@@ -34,6 +34,39 @@
                 android:layout_marginStart="16dp" />
         </LinearLayout>
 
+        <!-- Dashboard settings -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Dashboard settings"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="8dp" />
+
+        <!-- Dashboard zoom -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:id="@+id/tv_dashboard_zoom"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Dashboard zoom"
+                android:textSize="13sp"
+                android:textColor="@color/onSurface" />
+
+            <SeekBar
+                android:id="@+id/seek_dashboard_zoom"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:min="50"
+                android:max="300" />
+        </LinearLayout>
+
         <!-- Portal Presence -->
         <Switch
             android:id="@+id/sw_presence"
