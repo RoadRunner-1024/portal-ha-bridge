@@ -233,7 +233,7 @@ fi
 # stores its own token, bypassing the Portal's broken keystore). Works on A9 AND
 # A10 - the bridge's own wake-word detector drives it (millennium can't: on A10
 # a background recorder is mic-silenced). After this, enable "Alexa support" in
-# the app's Display & Presence settings. Reverse: adb uninstall com.amazon.alexa.multimodal.falcon
+# the app's Voice & Assistants settings. Reverse: adb uninstall com.amazon.alexa.multimodal.falcon
 if [ "$ALEXA" -eq 1 ]; then
   printf "\n%sProvisioning Amazon Alexa (falcon)...%s\n" "$C_CYAN" "$C_OFF"
   if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -303,7 +303,7 @@ if [ "$ALEXA" -eq 1 ]; then
   done
   if [ "$ready" -eq 1 ]; then
     printf "%s  [ok] Alexa connected (ReadyState)%s\n" "$C_GREEN" "$C_OFF"
-    printf "%s      Enable 'Alexa support' in the app (Display & Presence), then say your Alexa wake word.%s\n" "$C_CYAN" "$C_OFF"
+    printf "%s      Enable 'Alexa support' in the app (Settings -> Voice & Assistants), then say your Alexa wake word.%s\n" "$C_CYAN" "$C_OFF"
   else
     printf "%s  Alexa not connected within the window. Finish the amazon.com/code sign-in - it connects on its own; re-run --alexa to re-check.%s\n" "$C_YEL" "$C_OFF"
   fi

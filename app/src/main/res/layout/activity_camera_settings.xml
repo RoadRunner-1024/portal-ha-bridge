@@ -79,6 +79,27 @@
             android:textColor="@color/hint"
             android:layout_marginBottom="12dp" />
 
+        <TextView
+            android:id="@+id/tv_motion_sensitivity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="13sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_motion_sensitivity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="99" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Higher = more sensitive (smaller movements count). Also adjustable from Home Assistant — the two stay in sync."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="12dp" />
+
         <Switch
             android:id="@+id/sw_stream"
             android:layout_width="match_parent"

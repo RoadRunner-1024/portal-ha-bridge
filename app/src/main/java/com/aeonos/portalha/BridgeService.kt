@@ -70,7 +70,26 @@ class BridgeService : Service() {
         // our LISTEN can't be a real answer, so treat it as the race and re-fire LISTEN once:
         // the activity is warm by then, and the retry also cuts the error speech short.
         private const val ALEXA_COLD_ABORT_WINDOW_MS = 1_500L
+        // ★MEASURED ROOT CAUSE (2026-08-01, falcon's own logs during a cold abort):
+        //   SPCH-AP_AudioRecorder: Start reading from the audio stream
+        //   SPCH-SIM_StreamWriterRunnable: amazon.speech.audio.AudioStreamReader$OverrunException
+        //   SPCH-SIM_SimStateMachine: Got ErrorEvent in ListenState -> errorCode GENERIC
+        // The mic opens FINE (no silencing race — that earlier theory was wrong, and a
+        // 2.5 s pre-LISTEN settle did NOT prevent it). What fails is falcon's UPLOAD of
+        // the first utterance: its shm audio buffer overruns while the recognize stream
+        // is still being established, so it kills the turn ~200-400 ms in.
+        // Nothing on our side can pre-warm that, so we absorb it with a retry LISTEN.
+        // ★DO NOT SHORTEN THIS. Measured on-device 2026-08-01: at 80 ms the retry cuts
+        // her error speech to "sorr—" but falcon is still tearing the aborted turn down
+        // and DROPS the LISTEN — the turn then dies silently, which is far worse than a
+        // brief error sound. At 900 ms the retry is accepted and the turn recovers
+        // (verified: capture opens, full listen window, clean end). The audible cost is
+        // ~290 ms of "sorry, s—" and that is the right trade.
         private const val ALEXA_COLD_RETRY_MS = 900L
+        private const val ALEXA_COLD_RETRY2_MS = 1_400L
+        private const val ALEXA_COLD_MAX_RETRIES = 2
+        // Grace for our logcat reader to surface falcon's ErrorEvent after TURN_DONE.
+        private const val ALEXA_ERROR_CHECK_MS = 400L
         // The assistant must sit at baseline (no recording) continuously for this long
         // before we call the conversation done — rides over inter-turn mic releases.
         private const val WAKE_RECLAIM_DEBOUNCE_MS = 2_500L
@@ -189,6 +208,10 @@ class BridgeService : Service() {
         // presence threshold live in settings.
         fun currentSoundLevel(): Int = instance?.lastSoundLevel ?: -1
 
+        // Latest RAW temperature reading (offset not applied), or null — lets the
+        // Sensors screen show what the sensor sees while you set the offset.
+        fun currentRawTemp(): Float? = instance?.sensorBridge?.rawTemperature()
+
         // Latest combined presence (face OR sound), or null if unknown / presence
         // detection is off. Read by the Jarvis tool-provider's get_presence tool.
         fun currentPresence(): Boolean? = instance?.lastPublishedPresence
@@ -218,8 +241,11 @@ class BridgeService : Service() {
     private var audioReceiver: BroadcastReceiver? = null
     private var alexaTurnDoneReceiver: BroadcastReceiver? = null
     private var debugWakeReceiver: BroadcastReceiver? = null
+    private var debugCallReceiver: BroadcastReceiver? = null
     private var debugAudioReceiver: BroadcastReceiver? = null
     private var debugUpdateReceiver: BroadcastReceiver? = null
+    private var debugOwwReceiver: BroadcastReceiver? = null
+    private var debugScreenReceiver: BroadcastReceiver? = null
     private var sensorBridge: SensorBridge? = null
     private var soundMonitor: SoundMonitor? = null
     private var dialServer: DialServer? = null
@@ -477,6 +503,8 @@ class BridgeService : Service() {
         ).also {
             it.phrase = if (p.wakeWordEnabled) p.wakePhrase else ""
             it.alexaPhrase = if (p.alexaWakeEnabled) p.alexaWakePhrase else ""
+            it.verifyEnabled = p.wakeVerifyEnabled
+            it.verifyThreshold = p.wakeVerifyThreshold / 100f
         }
         soundMonitor?.wakeSink = { buf, n -> wakeDetector?.feed(buf, n) }
         // RTSP audio tap: resolved through the streamer on every chunk, so stream
@@ -660,8 +688,11 @@ class BridgeService : Service() {
         audioReceiver?.let { unregisterReceiver(it) }
         alexaTurnDoneReceiver?.let { runCatching { unregisterReceiver(it) } }
         debugWakeReceiver?.let { runCatching { unregisterReceiver(it) } }
+        debugCallReceiver?.let { runCatching { unregisterReceiver(it) } }
         debugAudioReceiver?.let { runCatching { unregisterReceiver(it) } }
         debugUpdateReceiver?.let { runCatching { unregisterReceiver(it) } }
+        debugOwwReceiver?.let { runCatching { unregisterReceiver(it) } }
+        debugScreenReceiver?.let { runCatching { unregisterReceiver(it) } }
         sensorBridge?.stop()
         soundMonitor?.stop()
         wakeDetector?.stop()
@@ -797,15 +828,25 @@ class BridgeService : Service() {
                 if (wakeIsAlexa && micYieldedForWake) {
                     wakeHandler.removeCallbacks(reclaimDebounce)
                     val sinceListen = System.currentTimeMillis() - lastListenAtMs
-                    if (sinceListen in 1..ALEXA_COLD_ABORT_WINDOW_MS && !alexaColdRetried) {
-                        // Cold-create silencing race (see ALEXA_COLD_ABORT_WINDOW_MS) —
-                        // one automatic retry; falcon's activity is warm now.
-                        alexaColdRetried = true
-                        Log.i(TAG, "wake: cold abort (TURN_DONE ${sinceListen}ms after LISTEN) -> auto-retrying")
-                        wakeHandler.postDelayed({
-                            if (micYieldedForWake && wakeIsAlexa) broadcastAlexaListen("cold-retry")
-                        }, ALEXA_COLD_RETRY_MS)
+                    if (sinceListen in 1..ALEXA_COLD_ABORT_WINDOW_MS &&
+                            alexaColdRetries < ALEXA_COLD_MAX_RETRIES) {
+                        retryFailedAlexaTurn("TURN_DONE ${sinceListen}ms after LISTEN")
                         return   // hold the yield; the retried turn drives the state from here
+                    }
+                    // Slower failures look identical to a real turn from timing alone
+                    // (measured: an abort 2.7 s in, error speech starting where a genuine
+                    // answer would). falcon logs its own ErrorEvent, so ask it instead —
+                    // after a beat, because our logcat reader can lag TURN_DONE slightly.
+                    if (alexaColdRetries < ALEXA_COLD_MAX_RETRIES) {
+                        val listenAt = lastListenAtMs
+                        wakeHandler.postDelayed({
+                            val errored = (falconReadiness?.lastErrorMs ?: 0L) > listenAt
+                            if (errored && micYieldedForWake && wakeIsAlexa &&
+                                    lastListenAtMs == listenAt &&           // no newer turn started
+                                    alexaColdRetries < ALEXA_COLD_MAX_RETRIES) {
+                                retryFailedAlexaTurn("falcon ErrorEvent")
+                            }
+                        }, ALEXA_ERROR_CHECK_MS)
                     }
                     if (assistantSpeaking()) {
                         // TURN_DONE can arrive while the response audio is still playing
@@ -885,6 +926,54 @@ class BridgeService : Service() {
             registerReceiver(debugUpdateReceiver, IntentFilter("com.aeonos.portalha.DEBUG_UPDATE_PROMPT"))
         }
 
+        // Debug: score the last ~2.4s of mic audio with the openWakeWord verifiers, so a
+        // room's noise floor and a real utterance can be compared when picking a threshold:
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_OWW_SCORE
+        // With --es file <path>, scores that WAV instead of the mic buffer (offline harness).
+        debugOwwReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val file = intent.getStringExtra("file")
+                Thread({
+                    if (file != null) wakeDetector?.debugScoreFile(file) else wakeDetector?.debugScore()
+                }, "portal-ha-oww-debug").also { it.isDaemon = true }.start()
+            }
+        }
+        runCatching {
+            registerReceiver(debugOwwReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OWW_SCORE"))
+        }
+
+        // Debug: open a settings screen from adb. The settings activities are
+        // exported=false (nothing else should be able to launch them), so `am start`
+        // is refused — this is the smoke-test route after UI changes:
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_OPEN_SCREEN --es screen VoiceSettingsActivity
+        debugScreenReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val name = intent.getStringExtra("screen") ?: return
+                runCatching {
+                    startActivity(Intent().setClassName(packageName, "$packageName.$name")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    Log.i(TAG, "debug: opened $name")
+                }.onFailure { Log.w(TAG, "debug: could not open '$name': ${it.message}") }
+            }
+        }
+        runCatching {
+            registerReceiver(debugScreenReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OPEN_SCREEN"))
+        }
+
+        // Debug: place an outbound Meta call from adb, e.g.:
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_PLACE_CALL --es self <selfFbid> --es to <calleeFbid> [--ez video true]
+        debugCallReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val self = intent.getStringExtra("self") ?: ""
+                val to = intent.getStringExtra("to") ?: ""
+                val video = intent.getBooleanExtra("video", false)
+                Log.i(TAG, "call: DEBUG_PLACE_CALL self=$self to=$to video=$video")
+                PortalCaller.placeCall(this@BridgeService, self, to, video)
+            }
+        }
+        runCatching {
+            registerReceiver(debugCallReceiver, IntentFilter("com.aeonos.portalha.DEBUG_PLACE_CALL"))
+        }
     }
 
     // ── MQTT loop ─────────────────────────────────────────────────────────────
@@ -1676,7 +1765,19 @@ class BridgeService : Service() {
     private var falconReadiness: FalconReadiness? = null
 
     @Volatile private var lastListenAtMs = 0L
-    @Volatile private var alexaColdRetried = false
+    @Volatile private var alexaColdRetries = 0
+
+    // Re-fire LISTEN after a turn falcon failed. Shared by both detection routes (the
+    // fast TURN_DONE window and falcon's own ErrorEvent) so the retry timing — which is
+    // the fragile part, see ALEXA_COLD_RETRY_MS — lives in exactly one place.
+    private fun retryFailedAlexaTurn(reason: String) {
+        alexaColdRetries++
+        val delay = if (alexaColdRetries == 1) ALEXA_COLD_RETRY_MS else ALEXA_COLD_RETRY2_MS
+        Log.i(TAG, "wake: failed Alexa turn ($reason) -> retry #$alexaColdRetries in ${delay}ms")
+        wakeHandler.postDelayed({
+            if (micYieldedForWake && wakeIsAlexa) broadcastAlexaListen("cold-retry")
+        }, delay)
+    }
 
     private fun broadcastAlexaListen(tag: String) {
         runCatching {
@@ -1928,7 +2029,7 @@ class BridgeService : Service() {
         wakeConsumerSeen = false
         wakeFocusReturned = false
         wakeSpeakingSeen = false
-        alexaColdRetried = false
+        alexaColdRetries = 0
         wakeYieldStartMs = System.currentTimeMillis()
         soundMonitor?.stop()        // free the mic; the wake detector idles on an empty queue
         Log.i(TAG, "wake: yielded mic to assistant")
@@ -2326,11 +2427,16 @@ class BridgeService : Service() {
         val sigChanged = startedWakePhrase != null && startedWakePhrase != sig
         wakeDetector?.phrase = if (p.wakeWordEnabled) p.wakePhrase else ""
         wakeDetector?.alexaPhrase = if (p.alexaWakeEnabled) p.alexaWakePhrase else ""
+        // Threshold applies live; the enable flag only takes effect on a (re)start
+        // since the verifiers are built with the recognizer.
+        wakeDetector?.verifyThreshold = p.wakeVerifyThreshold / 100f
+        val verifyChanged = wakeDetector?.verifyEnabled != p.wakeVerifyEnabled
+        wakeDetector?.verifyEnabled = p.wakeVerifyEnabled
         if (want) {
             if (soundMonitor?.isRunning() == false) soundMonitor?.start()
             if (wakeDetector?.isRunning() == false) {
                 wakeDetector?.start(); startedWakePhrase = sig
-            } else if (sigChanged) {
+            } else if (sigChanged || verifyChanged) {
                 // New enabled-phrase set → rebuild the recognizer. Stop now and restart after a
                 // short gap so the old decode thread exits (200 ms poll) before the new starts.
                 wakeDetector?.stop()

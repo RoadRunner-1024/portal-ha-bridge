@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/btn_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="←  Back"
+                android:backgroundTint="#37474F" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Voice &amp; Assistants"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="@color/onSurface"
+                android:layout_marginStart="16dp" />
+        </LinearLayout>
+
+        <!-- ── Wake words ──────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="WAKE WORDS"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_wake"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="On-device wake word"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Listens for the wake phrase on this Portal and hands off to your voice assistant. Needs the microphone, so it can't run alongside “Coexist” below."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:id="@+id/row_wake_phrase"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="4dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wake phrase"
+                android:textSize="16sp"
+                android:textColor="@color/onSurface" />
+
+            <EditText
+                android:id="@+id/et_wake_phrase"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:inputType="text"
+                android:maxLines="1"
+                android:textColor="@color/onSurface" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_wake_phrase_note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Always starts with “Hey” (e.g. “hey jarvis”)."
+            android:textSize="12sp"
+            android:textColor="@color/onSurface"
+            android:alpha="0.6"
+            android:layout_marginTop="-16dp"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Alexa support (separate wake word, hands off to the revived falcon client) -->
+        <Switch
+            android:id="@+id/sw_alexa"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Alexa support"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Adds a SECOND wake word that talks to Amazon Alexa (the revived on-device client), alongside your Jarvis wake word. Requires Alexa to be installed + signed in (one-time USB setup)."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:id="@+id/row_alexa_phrase"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="4dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Alexa wake word"
+                android:textSize="16sp"
+                android:textColor="@color/onSurface" />
+
+            <EditText
+                android:id="@+id/et_alexa_phrase"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:inputType="text"
+                android:maxLines="1"
+                android:textColor="@color/onSurface" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="A single word like “alexa” — no “hey”. Say it, pause, then your command (“alexa… what's the weather”)."
+            android:textSize="12sp"
+            android:textColor="@color/onSurface"
+            android:alpha="0.6"
+            android:layout_marginTop="-16dp"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ── Accuracy ────────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ACCURACY"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_wake_verify"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Reduce false wakes (neural check)"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Double-checks every detected wake word with a small neural network trained on that exact phrase, so the TV and passing conversation stop waking the Portal. Works with “alexa” and “hey jarvis”; other phrases are unaffected."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tv_wake_verify_coverage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tv_wake_verify_threshold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="14sp"
+            android:textColor="@color/onSurface" />
+
+        <SeekBar
+            android:id="@+id/seek_wake_verify_threshold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="93" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Higher = stricter: fewer false wakes, but a quiet or drawn-out “alexa” may be ignored. 15 is a good starting point — background noise and look-alike words score near zero, so a low setting still blocks them. Raise it only if false wakes get through."
+            android:textSize="12sp"
+            android:textColor="@color/onSurface"
+            android:alpha="0.6"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ── Announcements ───────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ANNOUNCEMENTS"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_voice_announce"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Voice announce"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:id="@+id/tv_voice_announce_note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Say your wake phrase + “announce” in one breath, wait for the chirp, then speak — your voice broadcasts to every Portal. Silence ends it."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ── External assistant ──────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="EXTERNAL ASSISTANT"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_coexist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Coexist with voice assistant"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Releases the microphone for an always-on wake-word assistant installed separately (e.g. portal-wake). Turns off this app's own wake words and the sound sensor."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="24dp" />
+    </LinearLayout>
+</ScrollView>

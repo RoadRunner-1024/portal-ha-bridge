@@ -68,7 +68,7 @@ chmod +x provision.sh
 ./provision.sh
 ```
 
-Both do the same thing — **nothing needs to be pre-installed**. The script downloads Google's platform-tools if `adb` isn't on your PATH, downloads and installs the latest release APK if the app isn't already on the device, grants every permission/app-op (all require ADB — they can't be granted from the Portal UI), auto-enables the screen-control accessibility service, and prints a green verification checklist. On **1st-gen Portal+ (Android 9)** it also disables a Meta display overlay that rendered the system installer dialog blank — so the **in-app updater** (Settings → *Check for Updates*) and sideloads are visible.
+Both do the same thing — **nothing needs to be pre-installed**. The script downloads Google's platform-tools if `adb` isn't on your PATH, downloads and installs the latest release APK if the app isn't already on the device, grants every permission/app-op (all require ADB — they can't be granted from the Portal UI), auto-enables the screen-control accessibility service, and prints a green verification checklist. On **1st-gen Portal+ (Android 9)** it also disables a Meta display overlay that rendered the system installer dialog blank — so the **in-app updater** (Settings → System & Updates → *Check for Updates*) and sideloads are visible.
 
 | Flag (Windows / macOS+Linux) | Effect |
 |---|---|
@@ -149,7 +149,7 @@ Talk between Portals on your network — hold a button, speak, and it plays out 
 
 - **Hold to Announce** — every dashboard's left-edge drawer has a Hold to Announce button with a target picker: **Everyone** (broadcast) or a **specific Portal**. Hold it, wait for the soft beep (the mic is live — "talk now"), and speak.
 - **Floating talk buttons** — optionally show always-on push-to-talk buttons on the dashboard. Create **as many as you like, each named and bound to its own target** (e.g. "Kitchen", "Office", "Everyone"). Double-tap a button to move it, then drag — it locks back into place when you let go.
-- **Appearance** — colour (hue / saturation / brightness, including grey), opacity, transparent background, and text colour are all configurable with a **live preview**, in **Settings → Intercom**.
+- **Appearance** — colour (hue / saturation / brightness, including grey), opacity, transparent background, and text colour are all configurable with a **live preview**, in **Settings → Intercom → Talk Button Look**.
 - **One at a time** — a network-wide speaking lock means only one Portal talks at once; the rest show "busy" until it's free (and it self-heals if a talker drops off).
 - **Volume** — incoming announcements play at a configurable level (Settings → Intercom).
 
@@ -194,13 +194,13 @@ It's implemented via the assistant's public `ToolContract` — an exported `Cont
 ### Hands-free wake word
 This app detects the wake phrase **on-device** (a small offline **Vosk** recognizer, on the mic it already holds) and triggers Jarvis via portal-wake's public handoff broadcast — **no separate wake app, and it works on Android 10 Portals**, which portal-assistant otherwise marks "Gen-1 only".
 
-- Enable **On-device wake word** in **Settings → Display & Presence**. First enable downloads a ~40 MB model once.
+- Enable **On-device wake word** in **Settings → Voice & Assistants**. First enable downloads a ~40 MB model once.
 - **The phrase is editable** (default "hey jarvis"), in the field under the toggle. Vosk is grammar-based, so any phrase works — no new model, no retraining.
 - **Android 9 (Portal+ 1st-gen):** wakes Jarvis subtly (its background overlay). **Android 10 (Portal / Mini):** Android denies the mic to a background-woken assistant, so the app briefly brings Jarvis to the foreground to let it hear you, then returns to the dashboard — a short per-wake screen takeover.
 - Mutually exclusive with **Coexist** below: use *this* to let the app detect the wake word, or *Coexist* to run a separate always-on wake app (e.g. portal-wake) instead.
 
 ### Coexist with a voice assistant
-Prefer to run a *separate* always-on wake app (e.g. [portal-wake](https://github.com/rudysev/portal-wake)) instead of this app's built-in wake word? The Portal has a single microphone, so turn on **Coexist with voice assistant** (Settings → Display & Presence) and the bridge **releases the mic**: the **Sound Level** sensor and sound-based presence turn off, and the intercom captures on-demand only while you're announcing — so the other app can hear "Hey Jarvis" the rest of the time.
+Prefer to run a *separate* always-on wake app (e.g. [portal-wake](https://github.com/rudysev/portal-wake)) instead of this app's built-in wake word? The Portal has a single microphone, so turn on **Coexist with voice assistant** (Settings → Voice & Assistants) and the bridge **releases the mic**: the **Sound Level** sensor and sound-based presence turn off, and the intercom captures on-demand only while you're announcing — so the other app can hear "Hey Jarvis" the rest of the time.
 
 ---
 
@@ -220,7 +220,7 @@ The bridge can put **real Amazon Alexa** back on a Portal — **including Androi
    ```
    Either downloads and SHA-verifies the stock Alexa client, installs it, grants its permissions, and opens the sign-in screen on the Portal.
 2. The Portal shows a code — enter it at **amazon.com/code** (any Amazon account region works, including .co.uk). The provisioner then relaunches the client until it connects (a few minutes; keep the cable in).
-3. On the Portal: enable **Alexa support** in **Settings → Display & Presence**. The wake phrase is editable — the default bare **"alexa"** is the most reliable.
+3. On the Portal: enable **Alexa support** in **Settings → Voice & Assistants**. The wake phrase is editable — the default bare **"alexa"** is the most reliable.
 
 That's the only step that ever needs a cable: it grants permissions to Amazon's app, which no on-device app can do for another package. Everything after — new Alexa features, fixes — arrives with normal app updates.
 

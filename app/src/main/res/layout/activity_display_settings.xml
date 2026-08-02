@@ -34,7 +34,16 @@
                 android:layout_marginStart="16dp" />
         </LinearLayout>
 
-        <!-- Portal Presence -->
+        <!-- ── Presence ────────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="PRESENCE"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
         <Switch
             android:id="@+id/sw_presence"
             android:layout_width="match_parent"
@@ -43,7 +52,7 @@
             android:textSize="16sp"
             android:textStyle="bold"
             android:textColor="@color/onSurface"
-            android:paddingVertical="12dp" />
+            android:layout_marginBottom="4dp" />
 
         <TextView
             android:layout_width="match_parent"
@@ -64,7 +73,7 @@
             android:padding="10dp"
             android:layout_marginBottom="16dp" />
 
-        <!-- Enhanced presence (camera + ambient sound) -->
+        <!-- Enhanced presence (also ambient sound) -->
         <Switch
             android:id="@+id/sw_enhanced_presence"
             android:layout_width="match_parent"
@@ -76,6 +85,7 @@
             android:paddingVertical="12dp" />
 
         <TextView
+            android:id="@+id/tv_enhanced_note"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Also marks the room occupied when ambient sound rises above the threshold — helps in low light where the camera misses people. Needs Presence Detection on."
@@ -105,157 +115,16 @@
                 android:max="40" />
         </LinearLayout>
 
-        <!-- Coexist with an external voice assistant -->
-        <Switch
-            android:id="@+id/sw_coexist"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Coexist with voice assistant"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/onSurface"
-            android:paddingVertical="12dp" />
-
+        <!-- ── Screen ──────────────────────────────────────────────────── -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Releases the microphone for an always-on wake-word assistant (e.g. portal-wake 'Hey Jarvis'). The Sound Level sensor and sound-based presence turn off (the Portal has a single mic), and the intercom captures only while you hold to announce."
+            android:text="SCREEN"
             android:textSize="12sp"
-            android:textColor="@color/hint"
-            android:layout_marginBottom="24dp" />
-
-        <!-- On-device wake word -->
-        <Switch
-            android:id="@+id/sw_wake"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="On-device wake word"
-            android:textSize="16sp"
             android:textStyle="bold"
-            android:textColor="@color/onSurface"
-            android:paddingVertical="12dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Listens for the wake phrase on this Portal and hands off to your voice assistant (Jarvis) — for Android 10 Portals where an always-on external wake app can't hold the mic. Downloads a ~40 MB model on first enable. Mutually exclusive with Coexist."
-            android:textSize="12sp"
-            android:textColor="@color/hint"
+            android:textColor="@color/colorPrimary"
             android:layout_marginBottom="8dp" />
 
-        <LinearLayout
-            android:id="@+id/row_wake_phrase"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="24dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Wake phrase"
-                android:textSize="14sp"
-                android:textColor="@color/onSurface" />
-
-            <EditText
-                android:id="@+id/et_wake_phrase"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:hint="hey jarvis"
-                android:inputType="text"
-                android:textColor="@color/onSurface"
-                android:layout_marginStart="12dp" />
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/tv_wake_phrase_note"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Always starts with “Hey” (e.g. “hey jarvis”)."
-            android:textSize="12sp"
-            android:textColor="@color/onSurface"
-            android:alpha="0.6"
-            android:layout_marginTop="-16dp"
-            android:layout_marginBottom="24dp" />
-
-        <!-- Alexa support (separate wake word, hands off to the revived falcon client) -->
-        <Switch
-            android:id="@+id/sw_alexa"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Alexa support"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/onSurface"
-            android:layout_marginBottom="4dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Adds a SECOND wake word that talks to Amazon Alexa (the revived on-device client), alongside your Jarvis wake word. Requires Alexa to be installed + signed in (Immortal). First-gen Portals only."
-            android:textSize="12sp"
-            android:textColor="@color/hint"
-            android:layout_marginBottom="8dp" />
-
-        <LinearLayout
-            android:id="@+id/row_alexa_phrase"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="4dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Alexa wake word"
-                android:textSize="16sp"
-                android:textColor="@color/onSurface" />
-
-            <EditText
-                android:id="@+id/et_alexa_phrase"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:inputType="text"
-                android:maxLines="1"
-                android:textColor="@color/onSurface" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="A single word like “alexa”. Say it, pause, then your command (“alexa… what’s the weather”)."
-            android:textSize="12sp"
-            android:textColor="@color/onSurface"
-            android:alpha="0.6"
-            android:layout_marginTop="-16dp"
-            android:layout_marginBottom="24dp" />
-
-        <Switch
-            android:id="@+id/sw_voice_announce"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Voice announce"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/onSurface"
-            android:paddingVertical="12dp" />
-
-        <TextView
-            android:id="@+id/tv_voice_announce_note"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Say your wake phrase + “announce” in one breath, wait for the chirp, then speak — your voice broadcasts to every Portal. Silence ends it."
-            android:textSize="12sp"
-            android:textColor="@color/onSurface"
-            android:alpha="0.6"
-            android:layout_marginBottom="24dp" />
-
-        <!-- Screen Off Timer -->
         <Switch
             android:id="@+id/sw_screen_timeout"
             android:layout_width="match_parent"
@@ -307,63 +176,12 @@
                 android:textColor="@color/onSurface" />
         </LinearLayout>
 
-        <!-- Temperature calibration (only shown if the device has the sensor) -->
-        <LinearLayout
-            android:id="@+id/section_temp"
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Temperature"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/onSurface"
-                android:paddingTop="8dp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="This device's temperature sensor is uncalibrated. Read a real thermometer and set the offset so they match."
-                android:textSize="12sp"
-                android:textColor="@color/hint"
-                android:layout_marginBottom="12dp" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Offset"
-                    android:textSize="14sp"
-                    android:textColor="@color/onSurface" />
-
-                <EditText
-                    android:id="@+id/et_temp_offset"
-                    android:layout_width="80dp"
-                    android:layout_height="wrap_content"
-                    android:inputType="numberDecimal|numberSigned"
-                    android:gravity="center"
-                    android:textColor="@color/onSurface"
-                    android:layout_marginStart="12dp"
-                    android:layout_marginEnd="8dp" />
-
-                <TextView
-                    android:id="@+id/tv_temp_now"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="°C"
-                    android:textSize="14sp"
-                    android:textColor="@color/hint" />
-            </LinearLayout>
-        </LinearLayout>
-
+            android:text="Wake words, Alexa and voice announce now live in Settings → Voice &amp; Assistants. Temperature calibration moved to Settings → Sensors."
+            android:textSize="12sp"
+            android:textColor="@color/onSurface"
+            android:alpha="0.5" />
     </LinearLayout>
 </ScrollView>

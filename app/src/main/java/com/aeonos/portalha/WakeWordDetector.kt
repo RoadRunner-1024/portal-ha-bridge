@@ -69,6 +69,13 @@ class WakeWordDetector(
         private const val STOP_MIN_CONF = 0.60
         private const val WARMUP_SILENCE_FRAMES = 25          // ~1 s of silence settles the decoder
         private val LEAD_ALIASES = mapOf("hey" to setOf("hey", "hay"))   // Vosk mishears "hey" as "hay"
+
+        // openWakeWord second stage: the last ~2.4 s of mic audio is kept so a Vosk
+        // match can be re-scored by a network trained on the actual phrase. 2.4 s
+        // covers the phrase plus decode lag (Vosk finalizes an utterance a beat
+        // after it ends) and yields several scoring windows.
+        private const val VERIFY_BUFFER_SAMPLES = 16000 * 24 / 10
+
     }
 
     /** One recognized word + its per-word confidence (−1 when the model gave no score). */
@@ -97,6 +104,81 @@ class WakeWordDetector(
     private var worker: Thread? = null
     private var lastFireMs = 0L
 
+    // ── openWakeWord verification ────────────────────────────────────────────
+    // Enabled by the service (Prefs.wakeVerifyEnabled); [verifyThreshold] is the
+    // score a Vosk match must reach to fire. Only phrases we ship a model for are
+    // verified — any other phrase keeps the Vosk-only behaviour.
+    @Volatile var verifyEnabled = true
+    @Volatile var verifyThreshold = 0.5f
+    private var jarvisVerifier: OwwVerifier? = null
+    private var alexaVerifier: OwwVerifier? = null
+    // Recent mic audio for the verifier, written on the capture thread and read on
+    // the wake worker. Coarse locking is fine — copies happen only on a Vosk match.
+    private val verifyBuf = ShortArray(VERIFY_BUFFER_SAMPLES)
+    private var verifyPos = 0
+    private var verifyFilled = 0
+    private val verifyLock = Any()
+
+    /** Whether a wake phrase can be neurally verified (used for logging/settings). */
+    fun canVerify(phrase: String) = OwwVerifier.modelFor(phrase) != null
+
+    /**
+     * Score the last ~2.4 s of mic audio with every loaded verifier and log the result,
+     * without any Vosk match. Purely a diagnostic (DEBUG_OWW_SCORE): it's how you find a
+     * sensible threshold for a room — run it while the TV is on to see what the noise
+     * floor scores, and right after saying the phrase to see what a real one scores.
+     */
+    /**
+     * Score a 16 kHz mono 16-bit PCM WAV instead of the mic buffer — the offline test
+     * harness for the verifier (push known utterances, compare scores). Padded/centred
+     * to the standard verification window so it takes the identical code path.
+     */
+    fun debugScoreFile(path: String) {
+        val pcm = runCatching {
+            val bytes = java.io.File(path).readBytes()
+            // Minimal WAV: find the "data" chunk rather than assuming a 44-byte header.
+            var i = 12
+            var off = 44; var len = bytes.size - 44
+            while (i + 8 <= bytes.size) {
+                val id = String(bytes, i, 4, Charsets.US_ASCII)
+                val sz = (bytes[i + 4].toInt() and 0xFF) or ((bytes[i + 5].toInt() and 0xFF) shl 8) or
+                    ((bytes[i + 6].toInt() and 0xFF) shl 16) or ((bytes[i + 7].toInt() and 0xFF) shl 24)
+                if (id == "data") { off = i + 8; len = minOf(sz, bytes.size - off); break }
+                i += 8 + sz + (sz and 1)
+            }
+            val n = len / 2
+            ShortArray(n) { k ->
+                ((bytes[off + 2 * k].toInt() and 0xFF) or (bytes[off + 2 * k + 1].toInt() shl 8)).toShort()
+            }
+        }.getOrElse { Log.w(TAG, "wake: oww file '$path' unreadable: ${it.message}"); return }
+
+        // Centre it in a full-length window (silence padded) so short clips still score.
+        val buf = ShortArray(VERIFY_BUFFER_SAMPLES)
+        val copy = minOf(pcm.size, VERIFY_BUFFER_SAMPLES)
+        val at = (VERIFY_BUFFER_SAMPLES - copy) / 2
+        System.arraycopy(pcm, 0, buf, at, copy)
+        listOfNotNull(jarvisVerifier, alexaVerifier).ifEmpty {
+            Log.i(TAG, "wake: oww file — no verifier loaded"); return
+        }.forEach { v ->
+            val s = v.score(buf)
+            Log.i(TAG, "wake: oww FILE '${path.substringAfterLast('/')}' vs '${v.name}' " +
+                "score=${"%.4f".format(s)} thr=$verifyThreshold (${pcm.size} samples of audio)")
+        }
+    }
+
+    fun debugScore() {
+        val audio = verifySnapshot()
+        if (audio == null) { Log.i(TAG, "wake: oww debug — no audio buffered yet (mic running?)"); return }
+        listOfNotNull(jarvisVerifier, alexaVerifier).ifEmpty {
+            Log.i(TAG, "wake: oww debug — no verifier loaded (enabled=$verifyEnabled)"); return
+        }.forEach { v ->
+            val t0 = System.currentTimeMillis()
+            val s = v.score(audio)
+            Log.i(TAG, "wake: oww debug '${v.name}' score=${"%.4f".format(s)} thr=$verifyThreshold " +
+                "(${System.currentTimeMillis() - t0}ms over ${audio.size} samples)")
+        }
+    }
+
     // Matches are ignored until this time. The service sets it briefly after a handoff
     // so the assistant's reply (echoed back through the mic) can't immediately re-fire.
     @Volatile private var ignoreUntilMs = 0L
@@ -123,6 +205,43 @@ class WakeWordDetector(
         if (!running.get() || n <= 0) return
         val frame = buf.copyOf(n)
         if (!queue.offer(frame)) { queue.poll(); queue.offer(frame) }   // drop oldest if behind
+        if (verifyEnabled) synchronized(verifyLock) {
+            for (i in 0 until n) {
+                verifyBuf[verifyPos] = buf[i]
+                verifyPos = (verifyPos + 1) % VERIFY_BUFFER_SAMPLES
+            }
+            verifyFilled = minOf(VERIFY_BUFFER_SAMPLES, verifyFilled + n)
+        }
+    }
+
+    /** Snapshot of the recent audio in chronological order (oldest → newest). */
+    private fun verifySnapshot(): ShortArray? = synchronized(verifyLock) {
+        if (verifyFilled < VERIFY_BUFFER_SAMPLES) return null   // not enough history yet
+        val out = ShortArray(VERIFY_BUFFER_SAMPLES)
+        val tail = VERIFY_BUFFER_SAMPLES - verifyPos
+        System.arraycopy(verifyBuf, verifyPos, out, 0, tail)
+        System.arraycopy(verifyBuf, 0, out, tail, verifyPos)
+        out
+    }
+
+    // Second-stage check: does a network trained on this exact phrase agree with
+    // Vosk? Unverifiable phrases (no shipped model) and a disabled/failed verifier
+    // pass through, so behaviour degrades to the previous Vosk-only policy.
+    private fun verified(phrase: String, what: String): Boolean {
+        if (!verifyEnabled) return true
+        val v = when (phrase) {
+            jarvisTarget -> jarvisVerifier
+            alexaTarget -> alexaVerifier
+            else -> null
+        } ?: return true
+        val audio = verifySnapshot() ?: return true
+        val started = System.currentTimeMillis()
+        val score = v.score(audio)
+        val took = System.currentTimeMillis() - started
+        if (score < 0f) return true                       // inference problem — don't block the wake
+        val ok = score >= verifyThreshold
+        Log.i(TAG, "wake: oww '${v.name}' score=${"%.3f".format(score)} thr=$verifyThreshold ${if (ok) "PASS" else "REJECT"} ($what, ${took}ms)")
+        return ok
     }
 
     private fun run() {
@@ -153,8 +272,13 @@ class WakeWordDetector(
         }
         runCatching { recognizer.setWords(true) }
         warmUp(recognizer)          // settle the decoder so the first "hey" isn't dropped
+        if (verifyEnabled) {
+            if (jarvisTarget.isNotEmpty()) jarvisVerifier = OwwVerifier.create(context, jarvisTarget)
+            if (alexaTarget.isNotEmpty()) alexaVerifier = OwwVerifier.create(context, alexaTarget)
+        }
         ready = true
-        Log.i(TAG, "wake: recognizer ready (jarvis='$jarvisTarget', alexa='$alexaTarget')")
+        Log.i(TAG, "wake: recognizer ready (jarvis='$jarvisTarget'${if (jarvisVerifier != null) "+oww" else ""}, " +
+            "alexa='$alexaTarget'${if (alexaVerifier != null) "+oww" else ""})")
         try {
             while (running.get()) {
                 val frame = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
@@ -169,17 +293,17 @@ class WakeWordDetector(
                 val hasAnnounce = rec.any { it.word == ANNOUNCE_WORD }
                 val hasStop = rec.any { it.word == STOP_WORD }
                 val jw = jarvisTarget; val aw = alexaTarget
-                if (jw.isNotEmpty() && hasAnnounce && isAnnounce(rec, jw)) {
+                if (jw.isNotEmpty() && hasAnnounce && isAnnounce(rec, jw) && verified(jw, "announce")) {
                     fire(recognizer, rec, "voice announce") { onAnnounce() }
                 } else if (aw.isNotEmpty() && hasStop && !hasAnnounce &&
-                        isCompound(rec, aw, STOP_WORD, STOP_MIN_CONF)) {
+                        isCompound(rec, aw, STOP_WORD, STOP_MIN_CONF) && verified(aw, "alexa stop")) {
                     fire(recognizer, rec, "alexa stop") { onAlexaStop() }
-                } else if (aw.isNotEmpty() && !hasAnnounce && isWakeFor(rec, aw)) {
+                } else if (aw.isNotEmpty() && !hasAnnounce && isWakeFor(rec, aw) && verified(aw, "alexa wake")) {
                     // NB "[alexa] [stop]" that fails the compound gate still lands here as a
                     // plain wake — in a held turn that's the barge-in, which cuts her speech
                     // anyway (most of what "stop" wanted).
                     fire(recognizer, rec, "alexa wake") { onAlexaWake() }
-                } else if (jw.isNotEmpty() && !hasAnnounce && isWakeFor(rec, jw)) {
+                } else if (jw.isNotEmpty() && !hasAnnounce && isWakeFor(rec, jw) && verified(jw, "wake")) {
                     fire(recognizer, rec, "wake") { onWake() }
                 } else if (rec.any { w -> (jw.isNotEmpty() && w.word == keywordOf(jw)) ||
                         (aw.isNotEmpty() && w.word == keywordOf(aw)) || w.word == ANNOUNCE_WORD }) {
@@ -193,6 +317,8 @@ class WakeWordDetector(
             ready = false
             runCatching { recognizer.close() }
             runCatching { model.close() }
+            jarvisVerifier?.close(); jarvisVerifier = null
+            alexaVerifier?.close(); alexaVerifier = null
             Log.i(TAG, "wake: stopped")
         }
     }

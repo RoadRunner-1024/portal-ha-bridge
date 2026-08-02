@@ -81,4 +81,9 @@ dependencies {
     // the wake word is changeable without a new model. The ~40 MB model is downloaded
     // to filesDir on first enable (keeps the APK small), not bundled.
     implementation("com.alphacephei:vosk-android:0.3.75")
+
+    // openWakeWord neural verifier (assets/oww/*.tflite, Apache-2, dscripka/openWakeWord):
+    // second-stage precision check on Vosk wake matches for phrases with a pretrained
+    // model ("alexa", "hey jarvis") — kills the grammar decoder's false positives.
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }

@@ -45,41 +45,85 @@
             android:padding="12dp"
             android:layout_marginBottom="8dp" />
 
+        <!-- Shown only while something still needs granting; the detail lives in
+             System & Updates, this is just the shortcut when it matters. -->
         <Button
-            android:id="@+id/btn_grant"
+            android:id="@+id/btn_fix_permissions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Grant Missing Permissions"
+            android:text="⚠  Fix Missing Permissions"
             android:backgroundTint="#E65100"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="20dp"
             android:visibility="gone" />
 
-        <Button
-            android:id="@+id/btn_check_update"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Check for Updates"
-            android:backgroundTint="#37474F"
-            android:layout_marginBottom="8dp" />
-
-        <Switch
-            android:id="@+id/sw_auto_update"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Check for updates daily"
-            android:textSize="16sp"
-            android:textColor="@color/onSurface"
-            android:paddingVertical="8dp" />
-
+        <!-- ── Settings sections ───────────────────────────────────────── -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Once a day, at a random time, this Portal checks GitHub for a new version. If one is found you'll be asked — with the changelog — whether to update, and you can skip a version you don't want."
+            android:text="SETTINGS"
             android:textSize="12sp"
-            android:textColor="@color/hint"
-            android:layout_marginBottom="20dp" />
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
 
-        <!-- MQTT Settings -->
+        <Button
+            android:id="@+id/btn_camera_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Camera"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_display_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Display &amp; Presence"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_voice_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Voice &amp; Assistants"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_intercom_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Intercom"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_sensor_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Sensors"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_system_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="System &amp; Updates"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ── Connection ──────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="CONNECTION"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -175,7 +219,6 @@
             android:textColor="@color/onSurface"
             android:layout_marginBottom="8dp" />
 
-
         <Button
             android:id="@+id/btn_save"
             android:layout_width="match_parent"
@@ -183,129 +226,5 @@
             android:text="Save &amp; Restart Service"
             android:backgroundTint="@color/colorPrimary"
             android:layout_marginBottom="16dp" />
-
-        <!-- Test controls -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
-
-            <Button
-                android:id="@+id/btn_sleep"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Test Sleep"
-                android:backgroundTint="#37474F"
-                android:layout_marginEnd="8dp" />
-
-            <Button
-                android:id="@+id/btn_wake"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Test Wake"
-                android:backgroundTint="#37474F" />
-        </LinearLayout>
-
-        <!-- Accessibility setup -->
-        <Button
-            android:id="@+id/btn_accessibility"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Enable Accessibility Service (for Sleep)"
-            android:backgroundTint="#4A148C"
-            android:layout_marginBottom="20dp" />
-
-        <!-- Camera -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Camera"
-            android:textSize="14sp"
-            android:textColor="@color/colorAccent"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btn_camera_settings"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Camera Settings"
-            android:backgroundTint="@color/colorPrimary"
-            android:layout_marginBottom="12dp" />
-
-        <Button
-            android:id="@+id/btn_display_settings"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Display &amp; Presence Settings"
-            android:backgroundTint="@color/colorPrimary"
-            android:layout_marginBottom="20dp" />
-
-        <!-- Intercom -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Intercom"
-            android:textSize="14sp"
-            android:textColor="@color/colorAccent"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btn_intercom_settings"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Intercom Settings"
-            android:backgroundTint="@color/colorPrimary"
-            android:layout_marginBottom="20dp" />
-
-        <!-- Tap Sensitivity -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Tap Sensitivity"
-            android:textSize="14sp"
-            android:textColor="@color/colorAccent"
-            android:layout_marginBottom="4dp" />
-
-        <TextView
-            android:id="@+id/tv_sensitivity_value"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textSize="12sp"
-            android:textColor="@color/hint"
-            android:layout_marginBottom="4dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Sensitive"
-                android:textSize="11sp"
-                android:textColor="@color/hint"
-                android:layout_marginEnd="8dp" />
-
-            <SeekBar
-                android:id="@+id/seek_sensitivity"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:max="26" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Firm"
-                android:textSize="11sp"
-                android:textColor="@color/hint"
-                android:layout_marginStart="8dp" />
-        </LinearLayout>
-
     </LinearLayout>
 </ScrollView>

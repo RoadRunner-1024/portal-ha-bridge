@@ -178,6 +178,26 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("alexa_wake_enabled", false)
         set(v) = sp.edit().putBoolean("alexa_wake_enabled", v).apply()
 
+    // Neural wake verification (openWakeWord): a second-stage check that re-scores
+    // every Vosk wake match with a network trained on that exact phrase, killing
+    // false positives. Only applies to phrases we ship a model for ("alexa",
+    // "hey jarvis"); other phrases stay Vosk-only either way. Threshold 0..100 —
+    // higher = stricter (fewer false wakes, more missed ones).
+    var wakeVerifyEnabled: Boolean
+        get() = sp.getBoolean("wake_verify_enabled", true)
+        set(v) = sp.edit().putBoolean("wake_verify_enabled", v).apply()
+    // Default 15, NOT the 50 you'd use for a standalone detector. This is a SECOND
+    // stage — Vosk must already have decoded the phrase — so it only has to separate
+    // "a real utterance" from "audio that merely fooled the grammar". Measured on a
+    // Portal (see the oww FILE debug harness): genuine "alexa" scores 0.03-0.99
+    // depending heavily on speaking rate (slow drawls score LOW), while impostors sit
+    // near zero — "a lexus election" 0.0065, unrelated speech and room noise 0.0000.
+    // A low floor therefore kills the false positives with a wide margin while barely
+    // risking a missed wake; raise it only if false wakes survive.
+    var wakeVerifyThreshold: Int
+        get() = sp.getInt("wake_verify_threshold", 15)
+        set(v) = sp.edit().putInt("wake_verify_threshold", v.coerceIn(2, 95)).apply()
+
     // EXPERIMENTAL: put the mic's audio on the RTSP camera stream (one-way
     // listen-in from HA). Tapped from SoundMonitor's capture — no second
     // AudioRecord — so it mutes automatically while the mic is yielded to

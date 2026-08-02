@@ -122,6 +122,22 @@
             android:exported="false" />
 
         <activity
+            android:name=".IntercomAppearanceActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".VoiceSettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".SensorSettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".SystemSettingsActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".IntercomButtonsActivity"
             android:exported="false" />
 

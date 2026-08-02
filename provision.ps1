@@ -279,7 +279,7 @@ if ($FreeAlohaMic) {
 # stores its own token, bypassing the Portal's broken keystore). Works on A9 AND
 # A10 - our own foreground wake-word detector drives it (millennium can't: on A10
 # a background recorder is mic-silenced). After this, enable "Alexa support" in the
-# app's Display & Presence settings. Reverse: adb uninstall com.amazon.alexa.multimodal.falcon
+# app's Voice & Assistants settings. Reverse: adb uninstall com.amazon.alexa.multimodal.falcon
 if ($Alexa) {
     Write-Host "`nProvisioning Amazon Alexa (falcon)..." -ForegroundColor Cyan
     $falcon    = "com.amazon.alexa.multimodal.falcon"
@@ -341,7 +341,7 @@ if ($Alexa) {
     }
     if ($ready) {
         Write-Host "  [ok] Alexa connected (ReadyState)" -ForegroundColor Green
-        Write-Host "      Enable 'Alexa support' in the app (Display & Presence), then say your Alexa wake word." -ForegroundColor Cyan
+        Write-Host "      Enable 'Alexa support' in the app (Settings -> Voice & Assistants), then say your Alexa wake word." -ForegroundColor Cyan
     } else {
         Write-Host "  Alexa not connected within the window. Finish the amazon.com/code sign-in - it connects on its own; re-run -Alexa to re-check." -ForegroundColor Yellow
     }

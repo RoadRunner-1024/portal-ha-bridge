@@ -13,24 +13,20 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
+// Presence detection and the screen-off timer — the settings that decide when the
+// Portal's display is on and whether the room counts as occupied. The wake words,
+// Alexa and voice announce that used to live here are now in Voice & Assistants;
+// temperature calibration is in Sensors.
 class DisplaySettingsActivity : AppCompatActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var swPresence: Switch
     private lateinit var swEnhancedPresence: Switch
-    private lateinit var swCoexist: Switch
-    private lateinit var swWake: Switch
-    private lateinit var swVoiceAnnounce: Switch
-    private lateinit var etWakePhrase: EditText
-    private lateinit var swAlexa: Switch
-    private lateinit var etAlexaPhrase: EditText
     private lateinit var seekPresenceSound: SeekBar
     private lateinit var tvPresenceSound: TextView
     private lateinit var swTimeout: Switch
     private lateinit var etMinutes: EditText
     private lateinit var tvPresenceStatus: TextView
-    private lateinit var etTempOffset: EditText
-    private var hasTempSensor = false
 
     // Live-sync the UI when the service changes prefs (HA commands).
     private val prefsListener =
@@ -57,26 +53,13 @@ class DisplaySettingsActivity : AppCompatActivity() {
 
         swPresence = findViewById(R.id.sw_presence)
         swEnhancedPresence = findViewById(R.id.sw_enhanced_presence)
-        swCoexist = findViewById(R.id.sw_coexist)
-        swWake = findViewById(R.id.sw_wake)
-        swVoiceAnnounce = findViewById(R.id.sw_voice_announce)
-        etWakePhrase = findViewById(R.id.et_wake_phrase)
-        swAlexa = findViewById(R.id.sw_alexa)
-        etAlexaPhrase = findViewById(R.id.et_alexa_phrase)
         seekPresenceSound = findViewById(R.id.seek_presence_sound)
         tvPresenceSound = findViewById(R.id.tv_presence_sound)
         swTimeout = findViewById(R.id.sw_screen_timeout)
         etMinutes = findViewById(R.id.et_timeout_minutes)
         tvPresenceStatus = findViewById(R.id.tv_presence_status)
-        etTempOffset = findViewById(R.id.et_temp_offset)
 
-        // The temperature section only makes sense on hardware that has the sensor.
-        hasTempSensor = getSystemService(android.hardware.SensorManager::class.java)
-            ?.getDefaultSensor(android.hardware.Sensor.TYPE_AMBIENT_TEMPERATURE) != null
-        findViewById<View>(R.id.section_temp).visibility = if (hasTempSensor) View.VISIBLE else View.GONE
-        etTempOffset.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveTempOffset() }
-
-        findViewById<Button>(R.id.btn_back).setOnClickListener { saveMinutes(); saveTempOffset(); saveWakePhrase(); finish() }
+        findViewById<Button>(R.id.btn_back).setOnClickListener { saveMinutes(); finish() }
 
         swPresence.setOnCheckedChangeListener { _, checked ->
             if (checked == prefs.presenceEnabled) return@setOnCheckedChangeListener
@@ -93,50 +76,6 @@ class DisplaySettingsActivity : AppCompatActivity() {
             prefs.enhancedPresenceEnabled = checked
             BridgeService.applyDisplaySettings(this)
             updateUi()
-        }
-
-        swCoexist.setOnCheckedChangeListener { _, checked ->
-            if (checked == prefs.coexistVoiceAssistant) return@setOnCheckedChangeListener
-            prefs.coexistVoiceAssistant = checked
-            if (checked && prefs.wakeWordEnabled) prefs.wakeWordEnabled = false   // mutually exclusive
-            BridgeService.applyDisplaySettings(this)
-            updateUi()
-            Toast.makeText(this,
-                if (checked) "Mic released for the voice assistant — sound sensor off"
-                else "Mic reclaimed — sound sensor on",
-                Toast.LENGTH_SHORT).show()
-        }
-
-        swWake.setOnCheckedChangeListener { _, checked ->
-            if (checked == prefs.wakeWordEnabled) return@setOnCheckedChangeListener
-            prefs.wakeWordEnabled = checked
-            if (checked && prefs.coexistVoiceAssistant) prefs.coexistVoiceAssistant = false   // mutually exclusive
-            BridgeService.applyDisplaySettings(this)
-            updateUi()
-            Toast.makeText(this,
-                if (checked) "Wake word on — model downloads on first use, then say your phrase"
-                else "Wake word off",
-                Toast.LENGTH_SHORT).show()
-        }
-        etWakePhrase.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveWakePhrase() }
-
-        swAlexa.setOnCheckedChangeListener { _, checked ->
-            if (checked == prefs.alexaWakeEnabled) return@setOnCheckedChangeListener
-            if (checked && !alexaProvisioned()) {
-                // Enabling without falcon would arm a wake word that leads nowhere.
-                showAlexaProvisionDialog()
-                updateUi()   // snap the switch back off
-                return@setOnCheckedChangeListener
-            }
-            prefs.alexaWakeEnabled = checked
-            BridgeService.applyDisplaySettings(this)
-            updateUi()
-        }
-        etAlexaPhrase.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveAlexaPhrase() }
-
-        // Read at trigger time by the service — no live apply needed.
-        swVoiceAnnounce.setOnCheckedChangeListener { _, checked ->
-            if (checked != prefs.voiceAnnounceEnabled) { prefs.voiceAnnounceEnabled = checked; updateUi() }
         }
 
         seekPresenceSound.progress = prefs.presenceSoundThreshold
@@ -173,8 +112,6 @@ class DisplaySettingsActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         saveMinutes()
-        saveTempOffset()
-        saveWakePhrase()
         prefs.unregisterListener(prefsListener)
         levelHandler.removeCallbacks(levelPoll)
     }
@@ -191,50 +128,6 @@ class DisplaySettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun saveTempOffset() {
-        if (!hasTempSensor) return
-        val v = etTempOffset.text.toString().toFloatOrNull() ?: return
-        val clamped = v.coerceIn(-20f, 20f)
-        if (clamped != prefs.tempOffset) {
-            prefs.tempOffset = clamped
-            BridgeService.applyDisplaySettings(this)
-        }
-    }
-
-    private fun saveWakePhrase() {
-        val before = prefs.wakePhrase
-        prefs.wakePhrase = etWakePhrase.text.toString()   // setter trims + enforces the "hey " prefix
-        if (prefs.wakePhrase != before) BridgeService.applyDisplaySettings(this)
-    }
-
-    private fun saveAlexaPhrase() {
-        val before = prefs.alexaWakePhrase
-        prefs.alexaWakePhrase = etAlexaPhrase.text.toString()
-        if (prefs.alexaWakePhrase != before && prefs.alexaWakeEnabled) BridgeService.applyDisplaySettings(this)
-    }
-
-    // Alexa support needs Amazon's Alexa client (falcon) on the device — installed and
-    // permission-granted by the USB provisioner only (no app can grant permissions to
-    // another package, so an over-the-air app update can never do this step).
-    private fun alexaProvisioned(): Boolean = runCatching {
-        packageManager.getPackageInfo("com.amazon.alexa.multimodal.falcon", 0)
-    }.isSuccess
-
-    private fun showAlexaProvisionDialog() {
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Alexa isn't provisioned yet")
-            .setMessage("Alexa support needs Amazon's Alexa client on this Portal. App " +
-                "updates can't install it — its permissions can only be granted over USB.\n\n" +
-                "One-time setup: connect a USB cable to a computer and run\n\n" +
-                "    provision.ps1 -Alexa    (Windows)\n" +
-                "    ./provision.sh --alexa  (macOS/Linux)\n\n" +
-                "then enter the code the Portal shows at amazon.com/code. Full steps are in " +
-                "the README under “Alexa on your Portal”.\n\n" +
-                "Once that's done, come back and turn this on.")
-            .setPositiveButton("OK", null)
-            .show()
-    }
-
     private fun updateUi() {
         swPresence.isChecked = prefs.presenceEnabled
         swTimeout.isChecked = prefs.screenTimeoutEnabled
@@ -242,51 +135,30 @@ class DisplaySettingsActivity : AppCompatActivity() {
             etMinutes.setText(prefs.screenTimeoutMinutes.toString())
         findViewById<View>(R.id.row_timeout_mins).alpha = if (prefs.screenTimeoutEnabled) 1f else 0.4f
 
-        swCoexist.isChecked = prefs.coexistVoiceAssistant
-
-        // Wake word & coexist are mutually exclusive (wake needs our mic; coexist gives
-        // it to an external app). Grey out whichever the other one disables.
-        swWake.isChecked = prefs.wakeWordEnabled
-        if (!etWakePhrase.hasFocus() && etWakePhrase.text.toString() != prefs.wakePhrase)
-            etWakePhrase.setText(prefs.wakePhrase)
-        findViewById<View>(R.id.row_wake_phrase).alpha = if (prefs.wakeWordEnabled) 1f else 0.4f
-
-        // Alexa support: a second, independent wake word. Its own phrase field greys when off.
-        swAlexa.isChecked = prefs.alexaWakeEnabled
-        if (!etAlexaPhrase.hasFocus() && etAlexaPhrase.text.toString() != prefs.alexaWakePhrase)
-            etAlexaPhrase.setText(prefs.alexaWakePhrase)
-        findViewById<View>(R.id.row_alexa_phrase).alpha = if (prefs.alexaWakeEnabled) 1f else 0.4f
-
-        // Voice announce rides the wake detector — grey it out when wake is off.
-        swVoiceAnnounce.isChecked = prefs.voiceAnnounceEnabled
-        swVoiceAnnounce.isEnabled = prefs.wakeWordEnabled
-        swVoiceAnnounce.alpha = if (prefs.wakeWordEnabled) 1f else 0.4f
-        findViewById<View>(R.id.tv_voice_announce_note).alpha = if (prefs.wakeWordEnabled) 0.6f else 0.3f
-        // Our wake words (Jarvis + Alexa) need the mic; coexist gives it away — mutually exclusive.
-        val ourWake = prefs.wakeWordEnabled || prefs.alexaWakeEnabled
-        swWake.isEnabled = !prefs.coexistVoiceAssistant
-        swWake.alpha = if (prefs.coexistVoiceAssistant) 0.4f else 1f
-        swAlexa.isEnabled = !prefs.coexistVoiceAssistant
-        swAlexa.alpha = if (prefs.coexistVoiceAssistant) 0.4f else 1f
-        swCoexist.isEnabled = !ourWake
-        swCoexist.alpha = if (ourWake) 0.4f else 1f
-
         // Enhanced (sound) presence needs the mic — and only applies while presence
-        // detection is on — so it's unavailable while coexisting with an assistant.
+        // detection is on — so it's unavailable while coexisting with an assistant
+        // (that setting now lives in Voice & Assistants).
         val soundFeaturesAvailable = prefs.presenceEnabled && !prefs.coexistVoiceAssistant
         swEnhancedPresence.isChecked = prefs.enhancedPresenceEnabled
         swEnhancedPresence.isEnabled = soundFeaturesAvailable
         swEnhancedPresence.alpha = if (soundFeaturesAvailable) 1f else 0.4f
+        // Say WHY it's disabled — the switch that blocks it (coexist) lives on another
+        // screen now, so a greyed-out control here is otherwise a dead end.
+        findViewById<TextView>(R.id.tv_enhanced_note).text = when {
+            prefs.coexistVoiceAssistant ->
+                "Unavailable while “Coexist with voice assistant” is on — that hands the " +
+                "microphone to another app. Turn it off in Settings → Voice & Assistants."
+            !prefs.presenceEnabled ->
+                "Needs Presence Detection (above) turned on."
+            else ->
+                "Also marks the room occupied when ambient sound rises above the threshold — " +
+                "helps in low light where the camera misses people."
+        }
         if (seekPresenceSound.progress != prefs.presenceSoundThreshold)
             seekPresenceSound.progress = prefs.presenceSoundThreshold
         tvPresenceSound.text = soundLabel(prefs.presenceSoundThreshold)
         findViewById<View>(R.id.row_presence_sound).alpha =
             if (soundFeaturesAvailable && prefs.enhancedPresenceEnabled) 1f else 0.4f
-
-        if (hasTempSensor) {
-            val s = "%.1f".format(prefs.tempOffset)
-            if (etTempOffset.text.toString() != s) etTempOffset.setText(s)
-        }
 
         tvPresenceStatus.text = when {
             !prefs.presenceEnabled -> "Presence detection off."

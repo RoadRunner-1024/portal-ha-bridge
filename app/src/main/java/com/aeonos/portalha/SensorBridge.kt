@@ -106,6 +106,11 @@ class SensorBridge(
         onPublish(HaDiscovery.tempStateTopic(p.deviceId), "%.1f".format(c + p.tempOffset), 0)
     }
 
+    // Last RAW temperature reading (no offset), or null before the first one.
+    // Shown live in Sensor settings so the offset can be calibrated against a
+    // real thermometer without guessing what the sensor currently reads.
+    fun rawTemperature(): Float? = if (lastTemp == Float.MIN_VALUE) null else lastTemp
+
     // Re-emit the last temperature with the current offset — called when the
     // offset changes so HA updates immediately instead of waiting for a reading.
     fun republishTemperature() {

@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to Portal HA Bridge. Versions are the app `versionName`;
-the in-app updater (Settings → *Check for Updates*) and the provisioner both pull
+the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
 ## v1.18.0 — Listen-in audio, self-updating fleet, intercom polish

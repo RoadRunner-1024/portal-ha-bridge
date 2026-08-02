@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/btn_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="←  Back"
+                android:backgroundTint="#37474F" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="System &amp; Updates"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="@color/onSurface"
+                android:layout_marginStart="16dp" />
+        </LinearLayout>
+
+        <!-- ── Permissions ─────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="PERMISSIONS"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tv_perm_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:textColor="@color/hint"
+            android:background="@color/surface"
+            android:padding="10dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_grant"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant Missing Permissions"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ── Updates ─────────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="UPDATES"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_check_update"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Check for Updates"
+            android:backgroundTint="#37474F"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_auto_update"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Check for updates daily"
+            android:textSize="16sp"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Once a day, at a random time, this Portal checks GitHub for a new version. If one is found you'll be asked — with the changelog — whether to update, and you can skip a version you don't want."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ── Screen control ──────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SCREEN CONTROL"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Turning the screen off needs the accessibility service. On Portal it can only be enabled with one adb command — the button below shows it."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btn_accessibility"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Enable Accessibility Service (for Sleep)"
+            android:backgroundTint="#37474F"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_sleep"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="Test Sleep"
+                android:backgroundTint="#37474F"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/btn_wake"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="Test Wake"
+                android:backgroundTint="#37474F" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>
