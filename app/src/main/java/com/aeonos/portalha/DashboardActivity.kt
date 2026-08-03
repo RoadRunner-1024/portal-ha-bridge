@@ -21,6 +21,8 @@ class DashboardActivity : AppCompatActivity() {
     companion object {
         @Volatile private var instance: DashboardActivity? = null
 
+        const val ACTION_CLEAR_WEB_CACHE = "com.aeonos.portalha.DEBUG_CLEAR_WEB_CACHE"
+
         // Snapshot the live dashboard as a bitmap, so the wake handoff can freeze it
         // on-screen (an overlay) while the assistant is invisibly brought forward to
         // grab the mic — the switch to the assistant is never seen. Uses PixelCopy:
@@ -100,12 +102,40 @@ class DashboardActivity : AppCompatActivity() {
         if (prefs.haToken.isNotBlank())
             webView.addJavascriptInterface(HaExternalBridge(this, webView, prefs), "externalApp")
 
+        // Diagnostics for the dashboard page. The devtools socket is a local abstract
+        // socket reachable only over adb (never the network), so this is safe to leave on
+        // and it's the only way to inspect what the page — or an iframe inside it — is
+        // doing on a device with no visible browser UI.
+        //   adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>
+        WebView.setWebContentsDebuggingEnabled(true)
+
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 // Grant media permissions so HA calls work inside the WebView
                 request.grant(request.resources)
             }
+            // WebView drops console output on the floor by default, which meant a page
+            // (or iframe) failing inside the kiosk was completely invisible in logcat.
+            // Forward it — errors from cross-origin iframes surface here too.
+            override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+                android.util.Log.i("PortalHA", "webview console [${m.messageLevel()}] " +
+                    "${m.message()} (${m.sourceId()}:${m.lineNumber()})")
+                return true
+            }
         }
+
+        // A third-party page embedded in the kiosk can wedge permanently on a stale cache:
+        // if its cached shell predates a server-side update, a SPA that reloads itself on a
+        // version mismatch (ImmichFrame does exactly this) strobes forever, and nothing in
+        // the page can recover it — a "fresh" cached entry is re-served on every reload
+        // instead of being revalidated. There is no browser UI on this device, so this is
+        // the only way to evict it.
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_CLEAR_WEB_CACHE
+        val cacheFilter = android.content.IntentFilter(ACTION_CLEAR_WEB_CACHE)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU)
+            registerReceiver(clearCacheReceiver, cacheFilter, android.content.Context.RECEIVER_EXPORTED)
+        else
+            @Suppress("UnspecifiedRegisterReceiverFlag") registerReceiver(clearCacheReceiver, cacheFilter)
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
@@ -354,7 +384,16 @@ class DashboardActivity : AppCompatActivity() {
         }
     }
 
+    private val clearCacheReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context?, i: Intent?) {
+            android.util.Log.i("PortalHA", "webview: clearing HTTP cache + reloading")
+            webView.clearCache(true)
+            webView.reload()
+        }
+    }
+
     override fun onDestroy() {
+        runCatching { unregisterReceiver(clearCacheReceiver) }
         if (instance === this) instance = null
         super.onDestroy()
     }
