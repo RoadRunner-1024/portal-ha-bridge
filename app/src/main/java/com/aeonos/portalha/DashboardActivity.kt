@@ -23,6 +23,9 @@ class DashboardActivity : AppCompatActivity() {
 
         const val ACTION_CLEAR_WEB_CACHE = "com.aeonos.portalha.DEBUG_CLEAR_WEB_CACHE"
 
+        // Per-process latch for the launch-time cache clear in loadDashboard().
+        @Volatile private var webCacheCleared = false
+
         // Snapshot the live dashboard as a bitmap, so the wake handoff can freeze it
         // on-screen (an overlay) while the assistant is invisibly brought forward to
         // grab the mic — the switch to the assistant is never seen. Uses PixelCopy:
@@ -327,6 +330,21 @@ class DashboardActivity : AppCompatActivity() {
                 "Swipe in from the <b>left edge</b> to open the menu, " +
                 "then tap <b>Settings</b> to enter your Home Assistant URL.")
         } else {
+            // Start each app launch on a clean HTTP cache. An embedded third-party page can
+            // wedge permanently on a stale cached shell — ImmichFrame reload-loops when its
+            // cached bundle disagrees with a current _app/version.json, and because it sends
+            // no Cache-Control the stale copy is re-served rather than revalidated, so the
+            // loop never ends by itself. Clearing here makes a Portal reboot the cure for
+            // the whole class of problem, instead of needing adb.
+            // Once per process, not per activity: recreate() (renderer death) and settings
+            // changes both re-enter this, and re-clearing there would just add latency.
+            // Cost is one re-download of the HA frontend per launch, over the LAN, and this
+            // app is long-running — launches are rare.
+            if (!webCacheCleared) {
+                webCacheCleared = true
+                android.util.Log.i("PortalHA", "webview: cleared HTTP cache for a fresh start")
+                webView.clearCache(true)
+            }
             webView.loadUrl(normalise(url))
         }
     }
