@@ -4,6 +4,50 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.19.0 — Fewer false wakes, settings you can find, Alexa that answers first time
+
+**Added**
+- **Neural false-wake check.** The wake word now gets a second opinion: a small
+  neural network re-listens to the two seconds around the match and has to
+  agree before anything wakes up. This is what stops the TV, a passing
+  conversation or a word that merely rhymes from setting the Portal off.
+  Voice & Assistants has an on/off switch and a strictness slider — the
+  default is deliberately forgiving, because a slow or quiet "alexa" scores
+  much lower than a brisk one and must still get through.
+- **Settings reorganised into six sections.** Camera, Display & Presence,
+  Voice & Assistants, Intercom, Sensors, and System & Updates. The main screen
+  keeps what you actually come back for — connection details and live status —
+  and a **⚠ Fix Missing Permissions** shortcut now appears there whenever
+  something needs granting, instead of hiding at the bottom of a list.
+- **Keep Alexa warm (opt-in, off by default).** Alexa's connection goes stale
+  after a minute or so of quiet, which is why the first thing you asked after
+  a while used to fail. With this on, the app quietly nudges her every 45
+  seconds so your first request lands. She can't hear the room while it
+  happens — her microphone is deliberately kept shut — and her "listening"
+  indicator is hidden behind the dashboard. The cost: the dashboard is a still
+  image for a few seconds each cycle, which only matters if you have live
+  camera feeds on it. Off by default so the choice is yours.
+- **Motion sensitivity slider** in Camera Settings. It was adjustable only
+  from Home Assistant — the one camera setting with no control on the device.
+- **Live temperature readout** in Sensors: "Sensor reads X°C → HA sees Y°C",
+  so the offset can be set by eye rather than by arithmetic.
+
+**Fixed**
+- **Alexa's "sorry, something went wrong" on the first request.** When her
+  session had gone stale the request was lost and you had to repeat yourself.
+  The app now detects the aborted turn and retries within a fraction of a
+  second, cutting her apology short. Turn on Keep Alexa Warm to stop it
+  happening in the first place.
+- **Sensor settings could quietly undo Home Assistant.** With the Sensors
+  screen open, a temperature offset changed from HA wasn't picked up, and
+  leaving the screen wrote the stale value back — reverting HA without a word.
+- **"Enhanced presence" greyed out with no explanation.** The setting that
+  disables it moved to another screen in this release; the helper text now
+  says which one.
+- **Documentation pointed at screens that no longer exist.** The README and
+  both provisioners named the old settings layout — including the provisioner
+  message printed at the exact moment you go looking for the Alexa switch.
+
 ## v1.18.0 — Listen-in audio, self-updating fleet, intercom polish
 
 **Added**
