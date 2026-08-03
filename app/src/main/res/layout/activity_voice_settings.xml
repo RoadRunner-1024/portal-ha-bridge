@@ -225,7 +225,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Alexa's connection goes stale after about a minute idle, and the first request after that loses what you said — you have to repeat it. This keeps the connection alive so the first request works. The catch: Alexa briefly shows its “listening” indicator every 45 seconds. It is never actually listening — its microphone is silenced and its sound is muted — but the indicator does appear."
+            android:text="Alexa's connection goes stale after about a minute idle, and the first request after that loses what you said — you have to repeat it. This keeps the connection alive so the first request works, silently: Alexa's microphone is silenced, its sound is muted, and its listening bar is hidden behind a still image of your dashboard. The only visible effect is that the dashboard stops updating for a few seconds every 45 — noticeable only if you have live camera feeds on it."
             android:textSize="12sp"
             android:textColor="@color/hint"
             android:layout_marginBottom="24dp" />

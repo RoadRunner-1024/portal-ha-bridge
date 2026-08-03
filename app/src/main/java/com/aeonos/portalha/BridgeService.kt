@@ -76,6 +76,9 @@ class BridgeService : Service() {
         private const val ALEXA_KEEPWARM_MS = 45_000L
         private const val ALEXA_KEEPWARM_MUTE_MS = 6_000L
         private const val ALEXA_KEEPWARM_SKIP_MS = 20_000L
+        // How long the dashboard snapshot stays up over a keep-warm — long enough to
+        // outlast Alexa's listening bar, short enough that a live dashboard barely blinks.
+        private const val ALEXA_KEEPWARM_COVER_MS = 7_000L
         // Cold-abort detection: when falcon's SIMActivity has to be COLD-CREATED (first turn
         // after its activity died, e.g. after our app restarts), its first capture opens
         // while the uid is still policy-silenced — the server gets dead air and kills the
@@ -2563,7 +2566,20 @@ class BridgeService : Service() {
             // became ~90 s — past the ~60-100 s staleness point this exists to beat.
             if (System.currentTimeMillis() - lastListenAtMs < ALEXA_KEEPWARM_SKIP_MS) return
             muteAlexaOutput(ALEXA_KEEPWARM_MUTE_MS, "keep-warm")
-            broadcastAlexaListen("keep-warm")
+            // ★Hide Alexa's own blue listening bar. A LISTEN makes falcon draw
+            // com.amazon.aria.AriaActivity — verified a plain BASE_APPLICATION window,
+            // which our TYPE_APPLICATION_OVERLAY cover sits above (overlay windows z-order
+            // above every activity). The cover is a pixel-perfect snapshot of the
+            // dashboard, so nothing visibly changes; the dashboard is just frozen for the
+            // few seconds the warm-up takes. Without this the panel appears to listen to
+            // the room every 45 s, which is what made keep-warm unacceptable as a default.
+            showWakeCover(Runnable {
+                broadcastAlexaListen("keep-warm")
+                wakeHandler.postDelayed({
+                    // A real wake may have started mid-warm-up; its flow owns the cover then.
+                    if (!micYieldedForWake) hideWakeCover()
+                }, ALEXA_KEEPWARM_COVER_MS)
+            })
         }
     }
 
