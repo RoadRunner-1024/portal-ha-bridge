@@ -2550,6 +2550,7 @@ class BridgeService : Service() {
             val p = prefs
             if (p?.alexaWakeEnabled != true) return              // feature off — stop the loop
             wakeHandler.postDelayed(this, ALEXA_KEEPWARM_MS)     // always keep the loop alive
+            if (!p.alexaKeepWarmEnabled) return                  // opt-in: see Prefs for why
             when {
                 micYieldedForWake -> return          // a real turn is in flight (and warms it)
                 inCall -> return                     // never inject audio work into a call
@@ -2580,7 +2581,8 @@ class BridgeService : Service() {
     private fun startAlexaKeepWarm() {
         wakeHandler.removeCallbacks(alexaKeepWarm)
         wakeHandler.postDelayed(alexaKeepWarm, ALEXA_KEEPWARM_MS)
-        Log.i(TAG, "wake: falcon keep-warm every ${ALEXA_KEEPWARM_MS / 1000}s (presence-gated)")
+        Log.i(TAG, "wake: falcon keep-warm loop armed (enabled=${prefs?.alexaKeepWarmEnabled}, " +
+            "every ${ALEXA_KEEPWARM_MS / 1000}s when on, presence-gated)")
     }
 
     private fun runFalconWarmup() {

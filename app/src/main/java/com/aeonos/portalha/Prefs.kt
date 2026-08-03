@@ -198,6 +198,18 @@ class Prefs(private val context: Context) {
         get() = sp.getInt("wake_verify_threshold", 15)
         set(v) = sp.edit().putInt("wake_verify_threshold", v.coerceIn(2, 95)).apply()
 
+    // Keep Alexa's session warm with a periodic silent, deaf LISTEN.
+    // ★OFF by default, and the trade-off is real: falcon's upload session goes stale
+    // after ~1 minute idle, and a stale first request loses the words you spoke (the
+    // retry revives the session but your command is already gone, so you repeat it).
+    // Keeping it warm fixes that — but every warm-up surfaces falcon's own "listening"
+    // indicator, which on a wall panel reads as the Portal listening to you every 45 s.
+    // Off = occasionally repeat yourself. On = a first request that works, with a
+    // visible listening blip. The user picks; nobody should get the blip by surprise.
+    var alexaKeepWarmEnabled: Boolean
+        get() = sp.getBoolean("alexa_keep_warm", false)
+        set(v) = sp.edit().putBoolean("alexa_keep_warm", v).apply()
+
     // EXPERIMENTAL: put the mic's audio on the RTSP camera stream (one-way
     // listen-in from HA). Tapped from SoundMonitor's capture — no second
     // AudioRecord — so it mutes automatically while the mic is yielded to

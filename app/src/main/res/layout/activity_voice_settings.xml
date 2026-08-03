@@ -212,6 +212,24 @@
             android:alpha="0.6"
             android:layout_marginBottom="24dp" />
 
+        <Switch
+            android:id="@+id/sw_alexa_keep_warm"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Keep Alexa ready (experimental)"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Alexa's connection goes stale after about a minute idle, and the first request after that loses what you said — you have to repeat it. This keeps the connection alive so the first request works. The catch: Alexa briefly shows its “listening” indicator every 45 seconds. It is never actually listening — its microphone is silenced and its sound is muted — but the indicator does appear."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="24dp" />
+
         <!-- ── Announcements ───────────────────────────────────────────── -->
         <TextView
             android:layout_width="match_parent"

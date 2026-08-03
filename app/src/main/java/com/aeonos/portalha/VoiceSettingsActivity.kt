@@ -27,6 +27,7 @@ class VoiceSettingsActivity : AppCompatActivity() {
     private lateinit var tvWakeVerify: TextView
     private lateinit var tvWakeVerifyCoverage: TextView
     private lateinit var swVoiceAnnounce: Switch
+    private lateinit var swKeepWarm: Switch
 
     // Live-sync when the service changes prefs underneath us (HA commands, cascades).
     private val prefsListener =
@@ -47,6 +48,7 @@ class VoiceSettingsActivity : AppCompatActivity() {
         tvWakeVerify = findViewById(R.id.tv_wake_verify_threshold)
         tvWakeVerifyCoverage = findViewById(R.id.tv_wake_verify_coverage)
         swVoiceAnnounce = findViewById(R.id.sw_voice_announce)
+        swKeepWarm = findViewById(R.id.sw_alexa_keep_warm)
 
         findViewById<Button>(R.id.btn_back).setOnClickListener { saveWakePhrase(); saveAlexaPhrase(); finish() }
 
@@ -100,6 +102,13 @@ class VoiceSettingsActivity : AppCompatActivity() {
         // Read at trigger time by the service — no live apply needed.
         swVoiceAnnounce.setOnCheckedChangeListener { _, checked ->
             if (checked != prefs.voiceAnnounceEnabled) { prefs.voiceAnnounceEnabled = checked; updateUi() }
+        }
+
+        swKeepWarm.setOnCheckedChangeListener { _, checked ->
+            if (checked == prefs.alexaKeepWarmEnabled) return@setOnCheckedChangeListener
+            prefs.alexaKeepWarmEnabled = checked
+            BridgeService.applyDisplaySettings(this)
+            updateUi()
         }
 
         swCoexist.setOnCheckedChangeListener { _, checked ->
@@ -202,6 +211,11 @@ class VoiceSettingsActivity : AppCompatActivity() {
             else "✗  “$p” has no model — not checked (only “alexa” and “hey jarvis” are)"
         }
         tvWakeVerifyCoverage.alpha = if (verifyActive) 0.75f else 0.35f
+
+        // Keep-warm only means anything while the Alexa wake word is on.
+        swKeepWarm.isChecked = prefs.alexaKeepWarmEnabled
+        swKeepWarm.isEnabled = prefs.alexaWakeEnabled
+        swKeepWarm.alpha = if (prefs.alexaWakeEnabled) 1f else 0.4f
 
         // Voice announce rides the wake detector — grey it out when wake is off.
         swVoiceAnnounce.isChecked = prefs.voiceAnnounceEnabled
