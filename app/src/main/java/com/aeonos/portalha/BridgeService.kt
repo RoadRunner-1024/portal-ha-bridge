@@ -63,6 +63,19 @@ class BridgeService : Service() {
         // session to re-establish (its activity launch IS the provisioner's "kick").
         private const val FALCON_WARMUP_DELAY_MS = 12_000L
         private const val FALCON_WARMUP_HOLD_MS = 2_500L
+        // How long to keep falcon's output muted around the warm-up turn: long enough to
+        // cover the abort, our retry, and any "sorry…" it speaks in between.
+        private const val FALCON_WARMUP_MUTE_MS = 9_000L
+        // ★KEEP-WARM. Measured 2026-08-02/03: falcon's upload session goes stale after
+        // roughly a minute idle — a turn 25 s after the last one is clean, one 100 s later
+        // aborts. The abort costs the user their WORDS (the retry recovers falcon's
+        // session, but by the time a fresh listen window opens the command has been
+        // spoken and thrown away), so it has to be PREVENTED, not recovered from.
+        // A deaf, muted LISTEN on this interval keeps the session alive so the real turn
+        // captures first time. Gated on presence so an empty room costs nothing.
+        private const val ALEXA_KEEPWARM_MS = 45_000L
+        private const val ALEXA_KEEPWARM_MUTE_MS = 6_000L
+        private const val ALEXA_KEEPWARM_SKIP_MS = 20_000L
         // Cold-abort detection: when falcon's SIMActivity has to be COLD-CREATED (first turn
         // after its activity died, e.g. after our app restarts), its first capture opens
         // while the uid is still policy-silenced — the server gets dead air and kills the
@@ -88,6 +101,9 @@ class BridgeService : Service() {
         private const val ALEXA_COLD_RETRY_MS = 900L
         private const val ALEXA_COLD_RETRY2_MS = 1_400L
         private const val ALEXA_COLD_MAX_RETRIES = 2
+        // Keep the mute a little past the retry LISTEN so the tail of the apology can't
+        // leak through; her real answer arrives seconds later, well clear of this.
+        private const val ALEXA_ABORT_MUTE_TAIL_MS = 500L
         // Grace for our logcat reader to surface falcon's ErrorEvent after TURN_DONE.
         private const val ALEXA_ERROR_CHECK_MS = 400L
         // The assistant must sit at baseline (no recording) continuously for this long
@@ -530,7 +546,7 @@ class BridgeService : Service() {
             // Warm falcon up so the FIRST "alexa" after our restart doesn't land on a stale
             // session ("something went wrong"). NOTE this onCreate path — not reconcileWake —
             // is what runs at boot; reconcileWake only fires on a settings APPLY.
-            if (p.alexaWakeEnabled) scheduleFalconWarmup()
+            if (p.alexaWakeEnabled) { scheduleFalconWarmup(); startAlexaKeepWarm() }
             reconcileIntercomOverlays()
             // Daily auto update check (opt-in): first evaluation 2 min after boot,
             // then hourly — maybeAutoUpdateCheck gates on the persisted due time.
@@ -715,6 +731,8 @@ class BridgeService : Service() {
             callWatchCallback = null
         }
         wakeHandler.removeCallbacks(autoUpdateTick)
+        wakeHandler.removeCallbacks(alexaKeepWarm)
+        unmuteAlexaOutput()   // never leave the Portal muted if we stop mid-warm-up
         intercom?.release()
         hideIntercomOverlays()
         instance = null
@@ -1773,6 +1791,13 @@ class BridgeService : Service() {
     private fun retryFailedAlexaTurn(reason: String) {
         alexaColdRetries++
         val delay = if (alexaColdRetries == 1) ALEXA_COLD_RETRY_MS else ALEXA_COLD_RETRY2_MS
+        // ★This is what actually silences "sorry, something went wrong". We learn the turn
+        // failed BEFORE she starts apologising — measured 2026-08-02: falcon's ErrorEvent
+        // at LISTEN+165 ms, our detection at +206 ms, her speech at +241 ms — so muting
+        // here beats the audio out by ~35 ms. The retry still recovers the turn; the user
+        // gets a second of silence and then the real answer instead of half an apology.
+        // Restored after the retry has taken hold (her real answer is seconds later).
+        muteAlexaOutput(delay + ALEXA_ABORT_MUTE_TAIL_MS, "cold abort")
         Log.i(TAG, "wake: failed Alexa turn ($reason) -> retry #$alexaColdRetries in ${delay}ms")
         wakeHandler.postDelayed({
             if (micYieldedForWake && wakeIsAlexa) broadcastAlexaListen("cold-retry")
@@ -2455,8 +2480,10 @@ class BridgeService : Service() {
         if (p.alexaWakeEnabled) {
             if (falconReadiness == null) falconReadiness = FalconReadiness().also { it.start() }
             scheduleFalconWarmup()
+            startAlexaKeepWarm()
         } else {
             falconReadiness?.stop(); falconReadiness = null
+            wakeHandler.removeCallbacks(alexaKeepWarm)
         }
     }
 
@@ -2479,24 +2506,110 @@ class BridgeService : Service() {
         if (!posted) Log.w(TAG, "wake: falcon warm-up post FAILED")
     }
 
+    // Streams falcon speaks on (her TTS is USAGE_ASSISTANCE_SONIFICATION, which maps to
+    // STREAM_SYSTEM; MUSIC is muted too because the exact mapping isn't guaranteed on
+    // Meta's build and a wrong guess would leave the warm-up audible).
+    private val alexaOutputStreams = intArrayOf(AudioManager.STREAM_SYSTEM, AudioManager.STREAM_MUSIC)
+    @Volatile private var alexaMuted = false
+    private val alexaUnmute = Runnable { unmuteAlexaOutput() }
+
+    // Silence falcon for [ms], then restore no matter what. Used around the warm-up turn,
+    // which deliberately provokes her cold failure — the user must not hear it.
+    private fun muteAlexaOutput(ms: Long, why: String) {
+        val am = getSystemService(AudioManager::class.java) ?: return
+        // Always (re)arm the restore, even if already muted — a second abort must
+        // extend the window rather than let the first timer unmute mid-retry.
+        wakeHandler.removeCallbacks(alexaUnmute)
+        wakeHandler.postDelayed(alexaUnmute, ms)
+        if (alexaMuted) return
+        alexaMuted = true
+        runCatching {
+            alexaOutputStreams.forEach { am.adjustStreamVolume(it, AudioManager.ADJUST_MUTE, 0) }
+            Log.i(TAG, "wake: falcon output muted ${ms}ms ($why)")
+        }.onFailure { Log.w(TAG, "wake: mute failed: ${it.message}"); alexaMuted = false }
+    }
+
+    private fun unmuteAlexaOutput() {
+        wakeHandler.removeCallbacks(alexaUnmute)
+        if (!alexaMuted) return
+        alexaMuted = false
+        val am = getSystemService(AudioManager::class.java) ?: return
+        runCatching {
+            alexaOutputStreams.forEach { am.adjustStreamVolume(it, AudioManager.ADJUST_UNMUTE, 0) }
+            Log.i(TAG, "wake: falcon output restored")
+        }.onFailure { Log.w(TAG, "wake: unmute failed: ${it.message}") }
+    }
+
+    // Periodic deaf+muted LISTEN that keeps falcon's upload session from going stale, so
+    // the user's first "alexa" captures their command instead of losing it to a cold
+    // abort. Same safety as the startup warm-up: falcon is NOT foregrounded, so A10
+    // silences its capture and it cannot act on anything said in the room, and its output
+    // is muted so the "didn't understand" it inevitably produces is never heard.
+    private val alexaKeepWarm = object : Runnable {
+        override fun run() {
+            val p = prefs
+            if (p?.alexaWakeEnabled != true) return              // feature off — stop the loop
+            wakeHandler.postDelayed(this, ALEXA_KEEPWARM_MS)     // always keep the loop alive
+            when {
+                micYieldedForWake -> return          // a real turn is in flight (and warms it)
+                inCall -> return                     // never inject audio work into a call
+                falconPlaying() -> return            // don't mute music/stories to keep warm
+                !alexaLikelyNeeded() -> return       // nobody around to talk to it
+            }
+            // Skip only if a turn warmed it VERY recently. Comparing against the full
+            // interval here was a bug: the tick is every 45 s and lastListenAtMs is
+            // always ~45 s old, so every other tick was skipped and the real cadence
+            // became ~90 s — past the ~60-100 s staleness point this exists to beat.
+            if (System.currentTimeMillis() - lastListenAtMs < ALEXA_KEEPWARM_SKIP_MS) return
+            muteAlexaOutput(ALEXA_KEEPWARM_MUTE_MS, "keep-warm")
+            broadcastAlexaListen("keep-warm")
+        }
+    }
+
+    // Only bother keeping falcon warm when someone could plausibly speak: presence, or
+    // recent sound if presence isn't in use. With presence off entirely we keep it warm
+    // unconditionally — that Portal has no better signal.
+    private fun alexaLikelyNeeded(): Boolean {
+        val p = prefs ?: return false
+        if (!p.presenceEnabled) return true
+        if (lastPublishedPresence == true) return true
+        return lastSoundActivityMs > 0 &&
+            System.currentTimeMillis() - lastSoundActivityMs < SOUND_PRESENCE_HOLD_MS
+    }
+
+    private fun startAlexaKeepWarm() {
+        wakeHandler.removeCallbacks(alexaKeepWarm)
+        wakeHandler.postDelayed(alexaKeepWarm, ALEXA_KEEPWARM_MS)
+        Log.i(TAG, "wake: falcon keep-warm every ${ALEXA_KEEPWARM_MS / 1000}s (presence-gated)")
+    }
+
     private fun runFalconWarmup() {
         Log.i(TAG, "wake: falcon warm-up fired (alexa=${prefs?.alexaWakeEnabled} yielded=$micYieldedForWake inCall=$inCall)")
         if (prefs?.alexaWakeEnabled != true) return
         if (micYieldedForWake) return   // a real turn is in flight — it warms falcon itself
         if (inCall) return              // never PiP a live call for a warm-up
-        Log.i(TAG, "wake: falcon warm-up kick (foreground behind cover, no LISTEN)")
-        showWakeCover(Runnable {
-            runCatching {
-                startActivity(Intent()
-                    .setClassName("com.amazon.alexa.multimodal.falcon",
-                        "com.amazon.alexa.multimodal.falcon.SIMActivity")
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
-            }.onFailure { Log.w(TAG, "wake: falcon warm-up launch failed: ${it.message}") }
-            wakeHandler.postDelayed({
-                // If a real wake started mid-warm-up, its flow owns the screen now.
-                if (!micYieldedForWake) bringDashboardToFront()
-            }, FALCON_WARMUP_HOLD_MS)
-        })
+        // ★The kick alone does NOT fix the first turn — measured repeatedly. Launching
+        // SIMActivity revives a stale ACTIVITY, but what actually fails on the first real
+        // "alexa" is falcon's first audio UPLOAD to Amazon (its shm buffer overruns while
+        // the recognize stream is still being set up). Only an actual LISTEN exercises
+        // that path, so the warm-up now fires one and SPENDS the cold failure here, where
+        // nobody is waiting on it.
+        //
+        // Two things make that safe:
+        //  - We do NOT foreground falcon for this. Backgrounded on A10 its capture is
+        //    policy-silenced, so it hears dead air and CANNOT act on anything said in the
+        //    room. (A foregrounded warm-up turn would be a live, unattended microphone.)
+        //  - Its output is muted for the whole window, so the "sorry, something went
+        //    wrong" this deliberately provokes is never audible.
+        // The user's first real "alexa" then lands on a falcon whose upload path is warm.
+        // NOTE: deliberately does NOT launch falcon's activity. An earlier version kicked
+        // SIMActivity here (left over from the theory that a stale ACTIVITY was the
+        // problem) — with no cover over it, that made falcon visibly take the screen for
+        // ~2.5 s on every start, which is exactly the flicker this app exists to avoid.
+        // The LISTEN above is what warms the upload session, and it needs no UI at all.
+        Log.i(TAG, "wake: falcon warm-up — muted LISTEN to spend the cold failure")
+        muteAlexaOutput(FALCON_WARMUP_MUTE_MS, "warm-up")
+        broadcastAlexaListen("warm-up")
     }
 
     // Combined presence = Meta face detection OR (when enhanced) recent ambient
