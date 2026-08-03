@@ -4,6 +4,32 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.19.1 — A restart now fixes a stuck dashboard
+
+**Fixed**
+- **Stale web content could jam the dashboard indefinitely.** A Portal runs
+  the same page for weeks and has no browser UI, so once it cached an old
+  copy of something, nothing you could reach would shift it — even a reload
+  re-served the stale copy rather than re-checking with the server. On one
+  Portal this showed up as an embedded photo-frame page reloading itself
+  about thirteen times a second, strobing the screen white; on the same
+  device it had also quietly pinned Browser Mod to a months-old version.
+  Each launch now starts with a clean web cache, so **restarting the Portal
+  is the cure** for anything of this kind.
+
+**Note**
+- Because of the above, the first launch after this update may pull your
+  Portal onto newer versions of custom cards and frontend resources it had
+  been holding stale. If a card then reports a version mismatch, that
+  mismatch was already there and simply hidden — it usually means Home
+  Assistant needs restarting so its side matches the files it is serving.
+
+**Added (diagnostics)**
+- Page and iframe console output now goes to the device log, so a page
+  failing inside the kiosk is visible instead of silent.
+- Chrome DevTools can attach over adb for inspecting the dashboard. The
+  debugging socket is reachable only over adb, never from the network.
+
 ## v1.19.0 — Fewer false wakes, settings you can find, Alexa that answers first time
 
 **Added**
