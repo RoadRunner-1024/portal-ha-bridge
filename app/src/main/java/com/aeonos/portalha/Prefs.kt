@@ -282,6 +282,14 @@ class Prefs(private val context: Context) {
         get() = sp.getInt("screen_timeout_minutes", 5)
         set(v) = sp.edit().putInt("screen_timeout_minutes", v.coerceIn(1, 240)).apply()
 
+    // Normally presence holds the screen awake — someone is standing there, so blanking would
+    // be wrong. On a panel that should go dark on a fixed schedule regardless (a bedroom, or a
+    // photo frame you want off at night), this lets the countdown run even while the room is
+    // occupied. Presence detection itself is unaffected; only its veto over the timer is.
+    var screenTimeoutIgnorePresence: Boolean
+        get() = sp.getBoolean("screen_timeout_ignore_presence", false)
+        set(v) = sp.edit().putBoolean("screen_timeout_ignore_presence", v).apply()
+
     var haUrl: String
         get() = sp.getString("ha_url", "") ?: ""
         set(v) = sp.edit().putString("ha_url", v).apply()
@@ -379,6 +387,74 @@ class Prefs(private val context: Context) {
     var wakeCoverStyle: String
         get() = sp.getString("wake_cover_style", "snapshot") ?: "snapshot"
         set(v) = sp.edit().putString("wake_cover_style", v).apply()
+
+    // ── Photo-frame screensaver ────────────────────────────────────────────────
+    // Renders an ImmichFrame / Immich Kiosk page over the dashboard after a period
+    // of quiet. It is an overlay, not an activity, so the dashboard stays foreground
+    // and the camera keeps streaming behind the photos (see ScreensaverOverlay).
+    var screensaverEnabled: Boolean
+        get() = sp.getBoolean("screensaver_enabled", false)
+        set(v) = sp.edit().putBoolean("screensaver_enabled", v).apply()
+
+    // The frame's own address, e.g. http://192.168.0.118:8355 for ImmichFrame.
+    // Which photos appear stays configured in ImmichFrame/Kiosk itself — that's the
+    // point of pointing at a page rather than talking to Immich directly.
+    var screensaverUrl: String
+        get() = sp.getString("screensaver_url", "") ?: ""
+        set(v) = sp.edit().putString("screensaver_url", v.trim()).apply()
+
+    // Quiet time before the photos appear. Deliberately shorter than the screen-off
+    // timer: photos come first, and the screen still sleeps on its own schedule.
+    var screensaverIdleSecs: Int
+        get() = sp.getInt("screensaver_idle_secs", 120)
+        set(v) = sp.edit().putInt("screensaver_idle_secs", v.coerceIn(15, 3600)).apply()
+
+    // How long a dismiss keeps the photos away. Without this a dismiss only restarts the
+    // idle countdown, so a motion-triggered camera view would be covered again as soon as
+    // that elapsed — the whole point is to hold the dashboard clear while you look at it.
+    // An MQTT dismiss can override this per-press by sending a number of seconds as the
+    // payload; the button sends "dismiss" and gets this default.
+    var screensaverDismissHoldSecs: Int
+        get() = sp.getInt("screensaver_dismiss_hold_secs", 60)
+        set(v) = sp.edit().putInt("screensaver_dismiss_hold_secs", v.coerceIn(0, 3600)).apply()
+
+    // Register our own blank screensaver as the system one. Default ON: Meta's power policy
+    // starts a dream at every screen timeout whatever the settings say, and a dream window
+    // outranks any overlay, so without this you get a frame of whatever screensaver the launcher
+    // ships on every single wake. Off puts the previous one back, for anyone who actually wants
+    // the launcher's own screensaver.
+    var claimDreamSlot: Boolean
+        get() = sp.getBoolean("claim_dream_slot", true)
+        set(v) = sp.edit().putBoolean("claim_dream_slot", v).apply()
+
+    // What was registered before we took the slot, so turning the above off restores it
+    // exactly. Blank = we haven't taken it.
+    var dreamRestoreComponents: String
+        get() = sp.getString("dream_restore_components", "") ?: ""
+        set(v) = sp.edit().putString("dream_restore_components", v).apply()
+
+    var dreamRestoreDefault: String
+        get() = sp.getString("dream_restore_default", "") ?: ""
+        set(v) = sp.edit().putString("dream_restore_default", v).apply()
+
+    // What a waking Portal shows: the dashboard (default) or the photos. A panel that lives on a
+    // shelf is often nicer to walk up to as a photo frame, with the dashboard a tap away.
+    var screensaverOnWake: Boolean
+        get() = sp.getBoolean("screensaver_on_wake", false)
+        set(v) = sp.edit().putBoolean("screensaver_on_wake", v).apply()
+
+    // Keep the photo page loaded while the screen is off, so it appears instantly instead of
+    // showing ImmichFrame's blank shell while its JavaScript boots. Costs a live WebView for the
+    // whole sleep, so it is opt-in on a 2.8 GB device.
+    var screensaverPrestage: Boolean
+        get() = sp.getBoolean("screensaver_prestage", false)
+        set(v) = sp.edit().putBoolean("screensaver_prestage", v).apply()
+
+    // Only show photos when somebody could actually see them. With presence off there
+    // is no better signal, so the screensaver just runs on the idle timer.
+    var screensaverPresenceOnly: Boolean
+        get() = sp.getBoolean("screensaver_presence_only", true)
+        set(v) = sp.edit().putBoolean("screensaver_presence_only", v).apply()
 
     val brokerUri: String get() = "tcp://$brokerHost:$brokerPort"
 }

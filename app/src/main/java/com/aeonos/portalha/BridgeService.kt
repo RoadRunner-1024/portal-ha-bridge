@@ -129,6 +129,14 @@ class BridgeService : Service() {
         private const val RTSP_RECOVER_MAX_ATTEMPTS = 6
         private const val DASHBOARD_RETURN_MS = 90_000L
 
+        // Settings.Secure screensaver keys — @hide, so referenced by name.
+        private const val DREAM_COMPONENTS = "screensaver_components"
+        private const val DREAM_DEFAULT = "screensaver_default_component"
+
+        // How long after screen-on to keep the wake covered. Long enough for the dashboard to be
+        // resumed and drawn, short enough not to feel like a slow wake.
+        private const val SLEEP_COVER_REVEAL_MS = 700L
+
         private const val ACTION_SET_CAMERA = "com.aeonos.portalha.SET_CAMERA"
         private const val EXTRA_CAMERA_ON = "camera_on"
         private const val ACTION_SET_ROTATION = "com.aeonos.portalha.SET_ROTATION"
@@ -190,10 +198,27 @@ class BridgeService : Service() {
         // The dashboard drives overlay visibility — the floating buttons show only
         // while the Portal HA Bridge dashboard is in front, not over other apps.
         @Volatile private var dashboardForeground = false
+
+        // True while the user is deliberately using another app (see
+        // DashboardActivity.onUserLeaveHint). Every path that pulls the dashboard to the front
+        // must check it, or a Portal being used as a tablet — Netflix, a browser — has the
+        // dashboard thrown over the top mid-programme. Cleared the moment the dashboard is
+        // genuinely front again, so an actual launcher steal after that still self-heals.
+        @Volatile private var userLeftDashboard = false
+
+        fun noteUserLeftDashboard() {
+            if (!userLeftDashboard) Log.i(TAG, "dashboard: user switched to another app — auto-return disabled until they come back")
+            userLeftDashboard = true
+        }
+
         fun setDashboardForeground(fg: Boolean) {
             dashboardForeground = fg
+            if (fg) userLeftDashboard = false
             instance?.reconcileIntercomOverlays()
         }
+
+        // A touch or key reached the dashboard — restart the photo-frame countdown.
+        fun noteUserInteraction() { instance?.lastInteractionMs = System.currentTimeMillis() }
 
         fun start(context: Context) =
             context.startForegroundService(Intent(context, BridgeService::class.java))
@@ -265,6 +290,7 @@ class BridgeService : Service() {
     private var debugUpdateReceiver: BroadcastReceiver? = null
     private var debugOwwReceiver: BroadcastReceiver? = null
     private var debugScreenReceiver: BroadcastReceiver? = null
+    private var debugScreensaverReceiver: BroadcastReceiver? = null
     private var sensorBridge: SensorBridge? = null
     private var soundMonitor: SoundMonitor? = null
     private var dialServer: DialServer? = null
@@ -348,6 +374,11 @@ class BridgeService : Service() {
             // screen-on resumes the LAUNCHER when it stole the front, not us, so
             // dropping here left the stream dead until a human intervened.
             !screenOn -> scheduleDashboardReturn()
+            // ★The user is in another app on purpose. Recovery is for a stranded panel, not for
+            // overriding someone watching Netflix — and the camera can't open from the
+            // background anyway, so returning would not even heal the stream. Keep polling so
+            // this resumes working the moment they come back and something really does steal it.
+            userLeftDashboard -> scheduleDashboardReturn()
             inCall || micYieldedForWake || TvAppActivity.isShowing() || falconPlaying() ->
                 scheduleDashboardReturn()                    // busy — check again later
             else -> {
@@ -463,7 +494,11 @@ class BridgeService : Service() {
     private val timeoutThread = HandlerThread("portal-ha-timeout").also { it.start() }
     private val timeoutHandler = Handler(timeoutThread.looper)
     private val timeoutRunnable = object : Runnable {
-        override fun run() { checkScreenTimeout(); timeoutHandler.postDelayed(this, 15_000L) }
+        override fun run() {
+            checkScreenTimeout()
+            runCatching { checkScreensaver() }.onFailure { Log.w(TAG, "screensaver check: ${it.message}") }
+            timeoutHandler.postDelayed(this, 15_000L)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -594,6 +629,7 @@ class BridgeService : Service() {
         screenOn = getSystemService(PowerManager::class.java).isInteractive
         lastActivityMs = System.currentTimeMillis()
         reconcilePresence(p)
+        reconcileDreamSlot(p)
         timeoutHandler.post(timeoutRunnable)
 
         if (p.cameraServiceEnabled && (isAloha || isCipher)) {
@@ -692,6 +728,7 @@ class BridgeService : Service() {
                         publishRaw(HaDiscovery.tempOffsetStateTopic(p.deviceId), "%.1f".format(p.tempOffset), 1, retained = true)
                         sensorBridge?.republishTemperature()
                     }
+                    reconcileDreamSlot(p)
                     lastActivityMs = System.currentTimeMillis()  // give the new timeout a fresh start
                 }.onFailure { Log.w(TAG, "applyDisplaySettings failed: ${it.message}") }
             }
@@ -701,6 +738,8 @@ class BridgeService : Service() {
 
     override fun onDestroy() {
         running.set(false)
+        runCatching { screensaver.hide() }
+        runCatching { sleepCover.hide() }   // never outlive the service holding the screen black
         commandExecutor.shutdownNow()
         runCatching { mqtt?.disconnect(0) }
         screenReceiver?.let { unregisterReceiver(it) }
@@ -782,6 +821,19 @@ class BridgeService : Service() {
                         screenOn = true
                         lastActivityMs = System.currentTimeMillis()  // restart the off-timer
                         publishState("ON"); reclaimForeground()
+                        // Wake straight to the photos when asked. Revealed BEFORE the cover
+                        // drops, so the hand-off is one composited step and the dashboard is
+                        // never glimpsed on the way past.
+                        prefs?.let { pp ->
+                            if (pp.screensaverEnabled && pp.screensaverOnWake &&
+                                pp.screensaverUrl.isNotBlank() && !userLeftDashboard) {
+                                screensaver.show(pp.screensaverUrl) { exitScreensaver() }
+                            }
+                        }
+                        // Reveal only once the dashboard has had time to be resumed and drawn;
+                        // dropping the cover on the ACTION_SCREEN_ON tick would show the very
+                        // frame it exists to hide. Removal is idempotent and self-limiting.
+                        wakeHandler.postDelayed({ sleepCover.hide() }, SLEEP_COVER_REVEAL_MS)
                         // The camera can die silently while the screen is dark (launcher
                         // steal + eviction, events lost to log pruning) — with the flag
                         // never set, ensureCamera would no-op on a dead stream. Verify.
@@ -790,7 +842,23 @@ class BridgeService : Service() {
                             wakeHandler.postDelayed(rtspHealthCheck, RTSP_HEALTH_CHECK_MS)
                         }
                     }
-                    Intent.ACTION_SCREEN_OFF -> { screenOn = false; publishState("OFF") }
+                    Intent.ACTION_SCREEN_OFF -> {
+                        screenOn = false; publishState("OFF")
+                        // Put the cover up NOW, while the panel is dark, so it is already
+                        // composited before the screen lights again. Skipped when the user is
+                        // deliberately in another app — there is no flash to hide then, and
+                        // blacking out their app for a moment would be its own annoyance.
+                        if (!userLeftDashboard) sleepCover.show()
+                        // Either park the photos out of sight but LOADED, so a wake can show
+                        // them instantly, or tear them down entirely. Prestaging is what makes
+                        // "wake to photos" usable — otherwise the first thing you see walking up
+                        // to the Portal is ImmichFrame's blank shell booting.
+                        val p = prefs
+                        if (p != null && p.screensaverEnabled && p.screensaverPrestage &&
+                            p.screensaverUrl.isNotBlank() && !userLeftDashboard) {
+                            screensaver.prestage(p.screensaverUrl) { exitScreensaver() }
+                        } else screensaver.hide()
+                    }
                 }
             }
         }
@@ -807,6 +875,9 @@ class BridgeService : Service() {
     // DashboardActivity is singleTask, so this reuses the existing instance.
     private fun reclaimForeground() {
         if (inCall) return   // never shove the dashboard over a live call (it would PiP it)
+        // Nor over an app the user deliberately opened: waking the screen is not a request to
+        // abandon whatever they were watching.
+        if (userLeftDashboard) return
         runCatching {
             startActivity(Intent(this, DashboardActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
@@ -963,6 +1034,29 @@ class BridgeService : Service() {
             registerReceiver(debugOwwReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OWW_SCORE"))
         }
 
+        // Debug: configure and drive the photo screensaver without typing a URL on the panel.
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_SCREENSAVER --es url http://host:8355
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_SCREENSAVER --es action show|hide
+        // "show" bypasses the idle and presence gates so a cold check doesn't mean standing in
+        // front of the Portal for two minutes; everything else about the overlay is unchanged.
+        debugScreensaverReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val p = prefs ?: return
+                intent.getStringExtra("url")?.let {
+                    p.screensaverUrl = it
+                    p.screensaverEnabled = true
+                    Log.i(TAG, "screensaver: url set to '$it' (enabled)")
+                }
+                when (intent.getStringExtra("action")) {
+                    "show" -> screensaver.show(p.screensaverUrl) { exitScreensaver() }
+                    "hide" -> exitScreensaver()
+                }
+            }
+        }
+        runCatching {
+            registerReceiver(debugScreensaverReceiver, IntentFilter("com.aeonos.portalha.DEBUG_SCREENSAVER"))
+        }
+
         // Debug: open a settings screen from adb. The settings activities are
         // exported=false (nothing else should be able to launch them), so `am start`
         // is refused — this is the smoke-test route after UI changes:
@@ -1065,6 +1159,11 @@ class BridgeService : Service() {
             HaDiscovery.volumeMuteCommandTopic(p.deviceId),
             HaDiscovery.soundCommandTopic(p.deviceId),
             HaDiscovery.showDashboardCommandTopic(p.deviceId),
+            HaDiscovery.screensaverCommandTopic(p.deviceId),
+            HaDiscovery.screensaverDismissCommandTopic(p.deviceId),
+            HaDiscovery.screensaverHoldCommandTopic(p.deviceId),
+            // Shared across the fleet, so one HA action clears the photos everywhere.
+            HaDiscovery.SCREENSAVER_FLEET_DISMISS_TOPIC,
             HaDiscovery.brightnessCommandTopic(p.deviceId),
             if (p.cameraServiceEnabled) HaDiscovery.cameraCommandTopic(p.deviceId) else null,
             // motion can be enabled live by the camera-ON cascade, so subscribe
@@ -1179,6 +1278,11 @@ class BridgeService : Service() {
         pub(HaDiscovery.alertDiscoveryTopic(p.deviceId), HaDiscovery.alertConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.inCallDiscoveryTopic(p.deviceId), HaDiscovery.inCallConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.showDashboardDiscoveryTopic(p.deviceId), HaDiscovery.showDashboardConfigPayload(p.deviceId, p.deviceName))
+        pub(HaDiscovery.screensaverDiscoveryTopic(p.deviceId), HaDiscovery.screensaverConfigPayload(p.deviceId, p.deviceName))
+        pub(HaDiscovery.screensaverDismissDiscoveryTopic(p.deviceId), HaDiscovery.screensaverDismissConfigPayload(p.deviceId, p.deviceName))
+        pub(HaDiscovery.screensaverHoldDiscoveryTopic(p.deviceId), HaDiscovery.screensaverHoldConfigPayload(p.deviceId, p.deviceName))
+        // Fleet button: identical payload from every Portal, so HA keeps exactly one entity.
+        pub(HaDiscovery.fleetScreensaverDismissDiscoveryTopic(), HaDiscovery.fleetScreensaverDismissConfigPayload())
         pub(HaDiscovery.brightnessDiscoveryTopic(p.deviceId), HaDiscovery.brightnessConfigPayload(p.deviceId, p.deviceName))
         // HA long-lived token, settable from HA (for the Jarvis tool-provider's smart-home control).
         pub(HaDiscovery.haTokenDiscoveryTopic(p.deviceId), HaDiscovery.haTokenConfigPayload(p.deviceId, p.deviceName))
@@ -1255,6 +1359,10 @@ class BridgeService : Service() {
             HaDiscovery.volumeMuteCommandTopic(p.deviceId)        -> handleVolumeMuteCommand(payload, p)
             HaDiscovery.soundCommandTopic(p.deviceId)             -> TonePlayer.play(payload)
             HaDiscovery.showDashboardCommandTopic(p.deviceId)     -> if (payload == "show") showDashboard()
+            HaDiscovery.screensaverCommandTopic(p.deviceId)       -> handleScreensaverCommand(payload, p)
+            HaDiscovery.screensaverDismissCommandTopic(p.deviceId),
+            HaDiscovery.SCREENSAVER_FLEET_DISMISS_TOPIC           -> dismissScreensaverFromHa(payload, p)
+            HaDiscovery.screensaverHoldCommandTopic(p.deviceId)   -> handleScreensaverHoldCommand(payload, p)
             HaDiscovery.brightnessCommandTopic(p.deviceId)        -> handleBrightnessCommand(payload, p)
             HaDiscovery.cameraCommandTopic(p.deviceId)            -> handleCameraCommand(payload, p)
             HaDiscovery.motionSensitivityCommandTopic(p.deviceId) -> handleMotionSensitivityCommand(payload, p)
@@ -1784,6 +1892,16 @@ class BridgeService : Service() {
     @Volatile private var wakeIsAlexa = false
     private var alexaBar: AlexaBarOverlay? = null
     private var falconReadiness: FalconReadiness? = null
+
+    private val screensaver by lazy { ScreensaverOverlay(this) }
+    private val sleepCover by lazy { SleepCover(this) }
+    // Time of the last REAL interaction (a touch or key on the dashboard). Deliberately not
+    // lastActivityMs: presence resets that one to hold the screen awake, so a photo frame keyed
+    // off it could never appear while somebody was standing in front of the Portal — which is
+    // precisely when you want it.
+    @Volatile private var lastInteractionMs = System.currentTimeMillis()
+    // Set by an HA dismiss: no photos until this passes, however quiet the Portal goes.
+    @Volatile private var screensaverHoldUntilMs = 0L
 
     @Volatile private var lastListenAtMs = 0L
     @Volatile private var alexaColdRetries = 0
@@ -2651,16 +2769,146 @@ class BridgeService : Service() {
     private fun checkScreenTimeout() {
         val p = prefs ?: return
         if (!p.screenTimeoutEnabled || !screenOn) return
-        // Presence (face or enhanced-sound) holds the screen awake and resets the countdown.
+        // Presence (face or enhanced-sound) holds the screen awake and resets the countdown —
+        // unless the user has asked for the screen to sleep on schedule regardless of whether
+        // anyone is there. Presence is still computed and published either way.
         recomputePresence(p)
-        if (lastPublishedPresence == true) { lastActivityMs = System.currentTimeMillis(); return }
+        if (lastPublishedPresence == true && !p.screenTimeoutIgnorePresence) {
+            lastActivityMs = System.currentTimeMillis(); return
+        }
         if (System.currentTimeMillis() - lastActivityMs >= p.screenTimeoutMinutes * 60_000L) {
             Log.i(TAG, "screen timeout: ${p.screenTimeoutMinutes}m idle — sleeping screen")
             ScreenControl.sleep()
         }
     }
 
+    /**
+     * Show or hide the photo frame. Runs on the same 15 s tick as the screen timeout, so idle
+     * detection is accurate to about that — fine for a countdown measured in minutes.
+     *
+     * Ordering with screen-off is deliberate and needs no extra setting: presence already resets
+     * [lastActivityMs], so while somebody is in the room the screen never sleeps and the photos
+     * simply stay up; once the room empties, the existing timeout sleeps the screen and the
+     * !screenOn branch below takes the frame down. Photos while you're there, dark when you're not.
+     */
+    private fun checkScreensaver() {
+        val p = prefs ?: return
+        if (!p.screensaverEnabled || p.screensaverUrl.isBlank()) {
+            // isStaged, not isShowing: a prestaged page is invisible but still a live WebView,
+            // so switching the feature off must tear it down rather than leak it.
+            if (screensaver.isStaged) screensaver.hide()
+            return
+        }
+        // Anything that owns the screen or the mic outranks a slideshow. Same guard list as the
+        // other overlays: a call, a cast, or an assistant turn must never be covered by photos.
+        // ★dashboardForeground is essential, not tidiness: the overlay swallows every touch, so
+        // appearing over a settings screen makes the UI unusable — fields can't be focused and
+        // the keyboard never opens. Only the dashboard feeds lastInteractionMs (via
+        // onUserInteraction), so any other screen would look idle and summon photos over itself.
+        val busy = inCall || dialServer?.appRunning == true || micYieldedForWake || falconPlaying()
+        if (!screenOn || busy || !dashboardForeground) {
+            if (screensaver.isShowing) screensaver.hide()
+            return
+        }
+        if (screensaver.isShowing) return
+        // Held off by a recent dismiss — someone is looking at the dashboard on purpose.
+        if (System.currentTimeMillis() < screensaverHoldUntilMs) return
+        // With presence off there's no better signal, so the idle timer alone drives it.
+        if (p.screensaverPresenceOnly && p.presenceEnabled && lastPublishedPresence != true) return
+        if (System.currentTimeMillis() - lastInteractionMs < p.screensaverIdleSecs * 1000L) return
+        screensaver.show(p.screensaverUrl) { exitScreensaver() }
+    }
+
+    /** Centre tap: drop the photos and restart both countdowns so it doesn't reappear at once. */
+    private fun exitScreensaver() {
+        lastInteractionMs = System.currentTimeMillis()
+        lastActivityMs = System.currentTimeMillis()
+        screensaver.hide()
+    }
+
+    /** HA switch: turn the whole feature on or off. Off takes any showing photos down at once. */
+    private fun handleScreensaverCommand(payload: String, p: Prefs) {
+        val on = payload.equals("ON", ignoreCase = true)
+        if (on != p.screensaverEnabled) p.screensaverEnabled = on
+        if (!on) screensaver.hide()
+        publishScreensaverState(p)
+        Log.i(TAG, "screensaver: HA set enabled=$on")
+    }
+
+    /**
+     * Dismiss now, from HA — per-device or fleet-wide. This is a "get out of the way" for a
+     * motion-triggered camera pop-up, not a way to switch the feature off (that's the switch).
+     * Harmless when nothing is showing, which matters for the fleet topic: every Portal receives
+     * it, and most of them won't have photos up.
+     *
+     * The photos are then held off for a window, not merely re-counted-down: restarting the idle
+     * timer alone would cover the cameras again the moment it elapsed. [payload] may carry a
+     * number of seconds to override the configured default for one press (e.g. publish "300" to
+     * hold five minutes); anything else uses [Prefs.screensaverDismissHoldSecs].
+     */
+    private fun dismissScreensaverFromHa(payload: String, p: Prefs) {
+        val hold = payload.trim().toIntOrNull()?.coerceIn(0, 3600) ?: p.screensaverDismissHoldSecs
+        val wasShowing = screensaver.isShowing
+        screensaverHoldUntilMs = System.currentTimeMillis() + hold * 1000L
+        exitScreensaver()
+        Log.i(TAG, "screensaver: dismissed by HA (showing=$wasShowing, held ${hold}s)")
+    }
+
+    /**
+     * Take (or hand back) the system screensaver slot.
+     *
+     * Meta's power policy starts a dream at the screen timeout no matter what
+     * `screensaver_enabled`, `screensaver_activate_on_sleep` or `screensaver_activate_on_dock`
+     * say — all three were measured being ignored — and a TYPE_DREAM window sits above every
+     * overlay we can draw, so it cannot be hidden either. The only way to stop the launcher's
+     * screensaver appearing on every wake is for OUR dream to be the one that runs.
+     *
+     * Both keys are set: `screensaver_components` is what runs, and `screensaver_default_component`
+     * is what the framework falls back to. The previous pair is remembered so switching this off
+     * restores exactly what was there.
+     */
+    private fun reconcileDreamSlot(p: Prefs) {
+        runCatching {
+            val ours = "$packageName/.BlankDreamService"
+            val cr = contentResolver
+            val cur = Settings.Secure.getString(cr, DREAM_COMPONENTS) ?: ""
+            if (p.claimDreamSlot) {
+                if (cur == ours) return
+                // Only record the first time, or a second pass would save our own value as the
+                // thing to restore and the original would be lost forever.
+                if (p.dreamRestoreComponents.isBlank()) {
+                    p.dreamRestoreComponents = cur
+                    p.dreamRestoreDefault = Settings.Secure.getString(cr, DREAM_DEFAULT) ?: ""
+                }
+                Settings.Secure.putString(cr, DREAM_COMPONENTS, ours)
+                Settings.Secure.putString(cr, DREAM_DEFAULT, ours)
+                Log.i(TAG, "dream: claimed the screensaver slot (was '$cur')")
+            } else if (p.dreamRestoreComponents.isNotBlank()) {
+                Settings.Secure.putString(cr, DREAM_COMPONENTS, p.dreamRestoreComponents)
+                Settings.Secure.putString(cr, DREAM_DEFAULT, p.dreamRestoreDefault)
+                Log.i(TAG, "dream: released the slot back to '${p.dreamRestoreComponents}'")
+                p.dreamRestoreComponents = ""
+                p.dreamRestoreDefault = ""
+            }
+        }.onFailure { Log.w(TAG, "dream slot reconcile failed: ${it.message}") }
+    }
+
+    private fun handleScreensaverHoldCommand(payload: String, p: Prefs) {
+        val secs = payload.trim().toFloatOrNull()?.toInt() ?: return
+        p.screensaverDismissHoldSecs = secs
+        publishScreensaverState(p)
+        Log.i(TAG, "screensaver: dismiss hold set to ${p.screensaverDismissHoldSecs}s")
+    }
+
+    private fun publishScreensaverState(p: Prefs) {
+        publishRaw(HaDiscovery.screensaverStateTopic(p.deviceId),
+            if (p.screensaverEnabled) "ON" else "OFF", 1, retained = true)
+        publishRaw(HaDiscovery.screensaverHoldStateTopic(p.deviceId),
+            p.screensaverDismissHoldSecs.toString(), 1, retained = true)
+    }
+
     private fun publishDisplayStates(p: Prefs) {
+        publishScreensaverState(p)
         publishRaw(HaDiscovery.presenceEnableStateTopic(p.deviceId), if (p.presenceEnabled) "ON" else "OFF", 1, retained = true)
         publishRaw(HaDiscovery.screenTimeoutStateTopic(p.deviceId), if (p.screenTimeoutEnabled) "ON" else "OFF", 1, retained = true)
         publishRaw(HaDiscovery.screenTimeoutMinsStateTopic(p.deviceId), p.screenTimeoutMinutes.toString(), 1, retained = true)

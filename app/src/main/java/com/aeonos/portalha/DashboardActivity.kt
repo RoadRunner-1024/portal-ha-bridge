@@ -231,6 +231,24 @@ class DashboardActivity : AppCompatActivity() {
         BridgeService.setDashboardForeground(false)
     }
 
+    // Any touch or key on the dashboard restarts the photo-frame countdown. onUserInteraction
+    // fires for every event dispatched to the activity, including taps inside the WebView, so
+    // it catches ordinary dashboard use that never surfaces anywhere else in the app.
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        BridgeService.noteUserInteraction()
+    }
+
+    // The user chose to go somewhere else — Home, or launching another app. Android calls this
+    // ONLY for a deliberate departure; when something steals the foreground (Meta's launcher
+    // asserting HOME on its own) the activity is paused with no leave hint at all. That is the
+    // difference between "recover a stranded panel" and "yank Netflix off the screen", so the
+    // service needs to know which happened.
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        BridgeService.noteUserLeftDashboard()
+    }
+
     override fun onResume() {
         super.onResume()
         instance = this

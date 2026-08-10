@@ -218,6 +218,66 @@ object HaDiscovery {
         return """{"name":"Volume Mute","unique_id":"${deviceId}_volume_mute","device":${device(deviceId, name)},"state_topic":"${volumeMuteStateTopic(deviceId)}","command_topic":"${volumeMuteCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:volume-off"}"""
     }
 
+    // ── Photo screensaver ─────────────────────────────────────────────────────
+
+    fun screensaverDiscoveryTopic(deviceId: String) =
+        "homeassistant/switch/${deviceId}_screensaver/config"
+
+    fun screensaverStateTopic(deviceId: String) = "portal/$deviceId/screensaver/state"
+    fun screensaverCommandTopic(deviceId: String) = "portal/$deviceId/screensaver/set"
+
+    fun screensaverConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Photo Screensaver","unique_id":"${deviceId}_screensaver","device":${device(deviceId, name)},"state_topic":"${screensaverStateTopic(deviceId)}","command_topic":"${screensaverCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:image-multiple"}"""
+    }
+
+    fun screensaverHoldDiscoveryTopic(deviceId: String) =
+        "homeassistant/number/${deviceId}_screensaver_hold/config"
+
+    fun screensaverHoldStateTopic(deviceId: String) = "portal/$deviceId/screensaver/hold/state"
+    fun screensaverHoldCommandTopic(deviceId: String) = "portal/$deviceId/screensaver/hold/set"
+
+    fun screensaverHoldConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Screensaver Dismiss Hold","unique_id":"${deviceId}_screensaver_hold","device":${device(deviceId, name)},"state_topic":"${screensaverHoldStateTopic(deviceId)}","command_topic":"${screensaverHoldCommandTopic(deviceId)}","min":0,"max":3600,"step":15,"unit_of_measurement":"s","mode":"box","icon":"mdi:timer-pause-outline"}"""
+    }
+
+    fun screensaverDismissCommandTopic(deviceId: String) = "portal/$deviceId/screensaver/dismiss"
+
+    fun screensaverDismissDiscoveryTopic(deviceId: String) =
+        "homeassistant/button/${deviceId}_screensaver_dismiss/config"
+
+    fun screensaverDismissConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Dismiss Screensaver","unique_id":"${deviceId}_screensaver_dismiss","device":${device(deviceId, name)},"command_topic":"${screensaverDismissCommandTopic(deviceId)}","payload_press":"dismiss","icon":"mdi:image-off"}"""
+    }
+
+    /**
+     * Fleet-wide dismiss. NOT per-device: one publish takes the photos down on every Portal at
+     * once, which is what a motion-triggered camera pop-up needs — an automation can't be
+     * expected to fan out to each panel and stay correct as Portals come and go.
+     */
+    const val SCREENSAVER_FLEET_DISMISS_TOPIC = "portal/screensaver/dismiss"
+
+    /**
+     * A single HA button for the fleet dismiss, so an automation can just press a button instead
+     * of hand-writing an mqtt.publish action.
+     *
+     * ★Every Portal publishes this SAME retained config to the SAME topic with the SAME
+     * unique_id, so Home Assistant collapses them into exactly one entity no matter how many
+     * Portals are online — and it survives any single Portal being off, because whichever one
+     * connects next re-publishes an identical payload. It is deliberately attached to a
+     * synthetic "Portal Fleet" device rather than to any real Portal, so it doesn't disappear
+     * with a panel and doesn't imply it only affects that one.
+     */
+    const val FLEET_DEVICE_ID = "portal_fleet"
+
+    fun fleetScreensaverDismissDiscoveryTopic() =
+        "homeassistant/button/${FLEET_DEVICE_ID}_screensaver_dismiss/config"
+
+    fun fleetScreensaverDismissConfigPayload(): String =
+        """{"name":"Dismiss Screensaver (All Portals)","unique_id":"${FLEET_DEVICE_ID}_screensaver_dismiss","device":{"identifiers":["$FLEET_DEVICE_ID"],"name":"Portal Fleet","model":"Meta Portal","manufacturer":"Meta"},"command_topic":"$SCREENSAVER_FLEET_DISMISS_TOPIC","payload_press":"dismiss","icon":"mdi:image-off-outline"}"""
+
     // ── Screen brightness number (slider) ─────────────────────────────────────
 
     fun brightnessDiscoveryTopic(deviceId: String) =
@@ -391,6 +451,9 @@ object HaDiscovery {
         streamEnableCommandTopic(deviceId),
         soundCommandTopic(deviceId),
         showDashboardCommandTopic(deviceId),
+        screensaverCommandTopic(deviceId),
+        screensaverDismissCommandTopic(deviceId),
+        screensaverHoldCommandTopic(deviceId),
         presenceEnableCommandTopic(deviceId),
         screenTimeoutCommandTopic(deviceId),
         screenTimeoutMinsCommandTopic(deviceId),
