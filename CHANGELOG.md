@@ -4,6 +4,46 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.20.0 — A photo screensaver, and a Portal that stays out of your way
+
+**Added**
+- **Photo screensaver.** Point it at your **ImmichFrame** or **Immich Kiosk** page and the
+  Portal shows your photos when nothing has been touched for a while. Which photos
+  appear stays configured where it already is — there is nothing to set up here
+  beyond the address. Tap the **left or right third** to move between photos and the
+  **middle** to go back to the dashboard.
+  - **The camera keeps streaming behind the photos.** The frame is drawn over the
+    dashboard rather than replacing it, so a Portal being used as a camera in Home
+    Assistant carries on working while it shows photos.
+  - **Wake to photos** — show the photos rather than the dashboard when the screen
+    wakes, so the Portal greets you as a photo frame.
+  - **Keep photos ready while asleep** — loads the page behind the dark screen so it
+    appears instantly instead of showing a blank page while it starts up. Costs some
+    memory for as long as the Portal sleeps, so it is yours to choose.
+  - **Only when someone's there** — photos while presence is detected, screen off when
+    the room empties.
+- **Control it from Home Assistant.** Every Portal gets a **Photo Screensaver** switch, a
+  **Dismiss Screensaver** button, and a **Screensaver Dismiss Hold** number, plus a single
+  **Dismiss Screensaver (All Portals)** button that clears the photos on every Portal at
+  once — for pop-up cameras on motion, without listing each panel in the automation.
+  Dismissing holds the photos off for a set time rather than letting them cover your
+  cameras again a moment later; publish a number of seconds to
+  `portal/screensaver/dismiss` to set that per automation.
+- **Blank screen while asleep** (on by default). The Portal starts its own screensaver
+  whenever the screen times out, which is why you saw a flash of the launcher's
+  screensaver every time it woke. This replaces it with a blank screen. Turn it off and
+  whatever was set before is put back.
+- **Sleep even if someone's there.** Presence normally keeps the screen awake; with this
+  on the screen-off timer runs regardless, so the Portal goes dark on schedule.
+
+**Fixed**
+- **The dashboard no longer barges in over another app.** If you left the Portal on
+  Netflix or a browser, the dashboard could haul itself back to the front a minute or so
+  later, and again on every screen wake. It now tells the difference between you
+  choosing another app and the app being pushed aside by something else, and only
+  recovers in the second case.
+- **No flash of the launcher's screensaver when the screen wakes** (see above).
+
 ## v1.19.1 — A restart now fixes a stuck dashboard
 
 **Fixed**
