@@ -147,6 +147,20 @@ adb_cmd shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow        # overlay -> ba
 adb_cmd shell appops set "$PKG" REQUEST_INSTALL_PACKAGES allow   # in-app "Check for Updates"
 printf "%s  set WRITE_SETTINGS + SYSTEM_ALERT_WINDOW + REQUEST_INSTALL_PACKAGES = allow%s\n" "$C_GREEN" "$C_OFF"
 
+# Portal OS "ambient display" timeout (plain system screen_off_timeout, 5 min out of the box).
+# It has NO effect while our dashboard is in front -- FLAG_KEEP_SCREEN_ON blocks that path -- so
+# this only shortens the windows where something else owns the screen, after a boot or a
+# foreground steal. Reported from the field: at 5 min the launcher sits on the display long
+# enough to keep winning; at 1 min the app is left alone on top. The same thing is available
+# in-app (Display and Presence -> "Shorten the Portal's own screen timeout"), which also restores
+# the old value; this just gives a freshly provisioned Portal a sane starting point.
+OS_TIMEOUT="$(adb_cmd shell settings get system screen_off_timeout | tr -d '\r\n')"
+if [ "$OS_TIMEOUT" != "60000" ]; then
+  adb_cmd shell settings put system screen_off_timeout 60000 >/dev/null 2>&1
+  printf "%s  screen_off_timeout %s -> 60000 (was the OS ambient-display timeout)%s\n" \
+    "$C_GREEN" "$OS_TIMEOUT" "$C_OFF"
+fi
+
 # Installer-overlay fix -- Gen-1 Portal+ (API < 29) only.
 # Meta's com.facebook.aloha.rro.niu.android RRO overlay causes the stock
 # package-installer dialog to render white-on-white (invisible Install button).

@@ -27,14 +27,10 @@ class DisplaySettingsActivity : AppCompatActivity() {
     private lateinit var swTimeout: Switch
     private lateinit var etMinutes: EditText
     private lateinit var tvPresenceStatus: TextView
-    private lateinit var swScreensaver: Switch
-    private lateinit var etScreensaverUrl: EditText
-    private lateinit var etScreensaverIdle: EditText
     private lateinit var swSleepIgnorePresence: Switch
+    private lateinit var swShortenOsTimeout: Switch
+    private lateinit var swStartOnBoot: Switch
     private lateinit var swClaimDream: Switch
-    private lateinit var swScreensaverOnWake: Switch
-    private lateinit var swScreensaverPrestage: Switch
-    private lateinit var swScreensaverPresence: Switch
 
     // Live-sync the UI when the service changes prefs (HA commands).
     private val prefsListener =
@@ -66,17 +62,16 @@ class DisplaySettingsActivity : AppCompatActivity() {
         swTimeout = findViewById(R.id.sw_screen_timeout)
         etMinutes = findViewById(R.id.et_timeout_minutes)
         tvPresenceStatus = findViewById(R.id.tv_presence_status)
-        swScreensaver = findViewById(R.id.sw_screensaver)
-        etScreensaverUrl = findViewById(R.id.et_screensaver_url)
-        etScreensaverIdle = findViewById(R.id.et_screensaver_idle)
-        swScreensaverPresence = findViewById(R.id.sw_screensaver_presence)
         swSleepIgnorePresence = findViewById(R.id.sw_sleep_ignore_presence)
+        swShortenOsTimeout = findViewById(R.id.sw_shorten_os_timeout)
+        swStartOnBoot = findViewById(R.id.sw_start_on_boot)
         swClaimDream = findViewById(R.id.sw_claim_dream)
-        swScreensaverOnWake = findViewById(R.id.sw_screensaver_on_wake)
-        swScreensaverPrestage = findViewById(R.id.sw_screensaver_prestage)
 
-        findViewById<Button>(R.id.btn_back).setOnClickListener { saveMinutes(); saveScreensaver(); finish() }
-        findViewById<Button>(R.id.btn_back_bottom).setOnClickListener { saveMinutes(); saveScreensaver(); finish() }
+        findViewById<Button>(R.id.btn_back).setOnClickListener { saveMinutes(); finish() }
+        findViewById<Button>(R.id.btn_back_bottom).setOnClickListener { saveMinutes(); finish() }
+        findViewById<Button>(R.id.btn_screensaver_settings).setOnClickListener {
+            startActivity(android.content.Intent(this, ScreensaverSettingsActivity::class.java))
+        }
 
         swPresence.setOnCheckedChangeListener { _, checked ->
             if (checked == prefs.presenceEnabled) return@setOnCheckedChangeListener
@@ -118,36 +113,19 @@ class DisplaySettingsActivity : AppCompatActivity() {
 
         etMinutes.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveMinutes() }
 
-        swScreensaver.setOnCheckedChangeListener { _, checked ->
-            if (checked == prefs.screensaverEnabled) return@setOnCheckedChangeListener
-            prefs.screensaverEnabled = checked
+        swShortenOsTimeout.setOnCheckedChangeListener { _, checked ->
+            if (checked == prefs.shortenOsTimeout) return@setOnCheckedChangeListener
+            prefs.shortenOsTimeout = checked
+            BridgeService.applyDisplaySettings(this)   // applies or restores it
             updateUi()
-            if (checked && prefs.screensaverUrl.isBlank())
-                Toast.makeText(this, "Enter your ImmichFrame or Kiosk address below",
+            if (checked && !android.provider.Settings.System.canWrite(this))
+                Toast.makeText(this, "Needs \"Modify system settings\" — see System & Updates",
                     Toast.LENGTH_LONG).show()
         }
 
-        swScreensaverPresence.setOnCheckedChangeListener { _, checked ->
-            if (checked == prefs.screensaverPresenceOnly) return@setOnCheckedChangeListener
-            prefs.screensaverPresenceOnly = checked
-            updateUi()
-        }
-
-        swScreensaverOnWake.setOnCheckedChangeListener { _, checked ->
-            if (checked == prefs.screensaverOnWake) return@setOnCheckedChangeListener
-            prefs.screensaverOnWake = checked
-            updateUi()
-            // Waking straight to a blank page while the frame boots is a poor first impression,
-            // so point at the setting that removes it rather than letting them find out.
-            if (checked && !prefs.screensaverPrestage)
-                Toast.makeText(this,
-                    "Turn on \"Keep photos ready while asleep\" so they appear instantly",
-                    Toast.LENGTH_LONG).show()
-        }
-
-        swScreensaverPrestage.setOnCheckedChangeListener { _, checked ->
-            if (checked == prefs.screensaverPrestage) return@setOnCheckedChangeListener
-            prefs.screensaverPrestage = checked
+        swStartOnBoot.setOnCheckedChangeListener { _, checked ->
+            if (checked == prefs.startOnBoot) return@setOnCheckedChangeListener
+            prefs.startOnBoot = checked
             updateUi()
         }
 
@@ -169,18 +147,6 @@ class DisplaySettingsActivity : AppCompatActivity() {
             updateUi()
         }
 
-        // Saved on focus loss and on the way out, like the timeout field.
-        etScreensaverUrl.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveScreensaver() }
-        etScreensaverIdle.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveScreensaver() }
-    }
-
-    private fun saveScreensaver() {
-        val url = etScreensaverUrl.text.toString().trim()
-        if (url != prefs.screensaverUrl) prefs.screensaverUrl = url
-        etScreensaverIdle.text.toString().toIntOrNull()?.let {
-            val clamped = it.coerceIn(15, 3600)
-            if (clamped != prefs.screensaverIdleSecs) prefs.screensaverIdleSecs = clamped
-        }
     }
 
     override fun onResume() {
@@ -193,7 +159,6 @@ class DisplaySettingsActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         saveMinutes()
-        saveScreensaver()
         prefs.unregisterListener(prefsListener)
         levelHandler.removeCallbacks(levelPoll)
     }
@@ -217,30 +182,12 @@ class DisplaySettingsActivity : AppCompatActivity() {
             etMinutes.setText(prefs.screenTimeoutMinutes.toString())
         findViewById<View>(R.id.row_timeout_mins).alpha = if (prefs.screenTimeoutEnabled) 1f else 0.4f
 
-        swScreensaver.isChecked = prefs.screensaverEnabled
-        swScreensaverPresence.isChecked = prefs.screensaverPresenceOnly
-        // Only overwrite the fields when they differ, or a live pref change would yank the
-        // cursor out from under someone mid-edit (and could write a half-typed URL back).
-        if (etScreensaverUrl.text.toString() != prefs.screensaverUrl)
-            etScreensaverUrl.setText(prefs.screensaverUrl)
-        if (etScreensaverIdle.text.toString() != prefs.screensaverIdleSecs.toString())
-            etScreensaverIdle.setText(prefs.screensaverIdleSecs.toString())
-        etScreensaverUrl.alpha = if (prefs.screensaverEnabled) 1f else 0.4f
-        etScreensaverIdle.alpha = if (prefs.screensaverEnabled) 1f else 0.4f
+        swShortenOsTimeout.isChecked = prefs.shortenOsTimeout
+        swStartOnBoot.isChecked = prefs.startOnBoot
         swClaimDream.isChecked = prefs.claimDreamSlot
         swSleepIgnorePresence.isChecked = prefs.screenTimeoutIgnorePresence
         swSleepIgnorePresence.isEnabled = prefs.screenTimeoutEnabled
         swSleepIgnorePresence.alpha = if (prefs.screenTimeoutEnabled) 1f else 0.4f
-        swScreensaverOnWake.isChecked = prefs.screensaverOnWake
-        swScreensaverPrestage.isChecked = prefs.screensaverPrestage
-        for (v in listOf(swScreensaverOnWake, swScreensaverPrestage)) {
-            v.isEnabled = prefs.screensaverEnabled
-            v.alpha = if (prefs.screensaverEnabled) 1f else 0.4f
-        }
-        // Presence-gating can't do anything without presence detection itself.
-        swScreensaverPresence.isEnabled = prefs.screensaverEnabled && prefs.presenceEnabled
-        swScreensaverPresence.alpha =
-            if (prefs.screensaverEnabled && prefs.presenceEnabled) 1f else 0.4f
 
         // Enhanced (sound) presence needs the mic — and only applies while presence
         // detection is on — so it's unavailable while coexisting with an assistant

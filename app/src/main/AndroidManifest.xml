@@ -118,6 +118,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".ScreensaverSettingsActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".IntercomSettingsActivity"
             android:exported="false" />
 

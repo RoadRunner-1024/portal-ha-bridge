@@ -129,6 +129,10 @@ class BridgeService : Service() {
         private const val RTSP_RECOVER_MAX_ATTEMPTS = 6
         private const val DASHBOARD_RETURN_MS = 90_000L
 
+        // What "shorten the OS screen timeout" sets it to. One minute is what the field report
+        // used; long enough not to fight anything, short enough that the OS stops waiting.
+        private const val OS_TIMEOUT_SHORT_MS = 60_000
+
         // Settings.Secure screensaver keys — @hide, so referenced by name.
         private const val DREAM_COMPONENTS = "screensaver_components"
         private const val DREAM_DEFAULT = "screensaver_default_component"
@@ -142,7 +146,17 @@ class BridgeService : Service() {
         private const val ACTION_SET_ROTATION = "com.aeonos.portalha.SET_ROTATION"
         private const val EXTRA_ROTATION = "rotation"
         private const val ACTION_ENSURE_CAMERA = "com.aeonos.portalha.ENSURE_CAMERA"
+        private const val ACTION_BOOTED = "com.aeonos.portalha.BOOTED"
         private const val ACTION_APPLY_DISPLAY = "com.aeonos.portalha.APPLY_DISPLAY"
+
+        // When to put the dashboard up after a boot, and it has to be several tries over a good
+        // minute. Measured on a real reboot: the system starts HOME at +0s, we win the front at
+        // +28s, the launcher launches us at +31s and then puts ITSELF back at +35s. Whoever
+        // asserts last wins, so we simply have to still be asserting after the launcher has
+        // finished. This is also what makes the behaviour independent of which launcher is
+        // installed — we never rely on its "launch an app at boot" setting, which on Immortal
+        // is self-defeating anyway.
+        private val BOOT_FRONT_DELAYS_MS = longArrayOf(4_000L, 12_000L, 25_000L, 45_000L, 70_000L)
         private const val ACTION_APPLY_INTERCOM = "com.aeonos.portalha.APPLY_INTERCOM"
         private const val ACTION_TWOWAY_TEST = "com.aeonos.portalha.TWOWAY_TEST"
         private const val EXTRA_TWOWAY_ON = "two_way_on"
@@ -222,6 +236,10 @@ class BridgeService : Service() {
 
         fun start(context: Context) =
             context.startForegroundService(Intent(context, BridgeService::class.java))
+
+        fun startFromBoot(context: Context) =
+            context.startForegroundService(Intent(context, BridgeService::class.java)
+                .setAction(ACTION_BOOTED))
 
         fun stop(context: Context) =
             context.stopService(Intent(context, BridgeService::class.java))
@@ -630,6 +648,7 @@ class BridgeService : Service() {
         lastActivityMs = System.currentTimeMillis()
         reconcilePresence(p)
         reconcileDreamSlot(p)
+        reconcileOsTimeout(p)
         timeoutHandler.post(timeoutRunnable)
 
         if (p.cameraServiceEnabled && (isAloha || isCipher)) {
@@ -702,6 +721,26 @@ class BridgeService : Service() {
             (prefs ?: Prefs(this).also { prefs = it }).wakeCoverStyle = style
             Log.i(TAG, "wake: cover style set to '$style'")
         }
+        if (intent?.action == ACTION_BOOTED) {
+            val p = prefs ?: Prefs(this).also { prefs = it }
+            if (p.startOnBoot) {
+                Log.i(TAG, "boot: bringing the dashboard to the front")
+                BOOT_FRONT_DELAYS_MS.forEach { d ->
+                    wakeHandler.postDelayed({
+                        // ★Clear the "user went elsewhere" flag first. A launcher starting its
+                        // own home screen fires onUserLeaveHint on us exactly as a real Home
+                        // press does (measured: Immortal does this ~35s into a boot), which
+                        // would otherwise switch the guard on and abandon the boot recovery
+                        // half-finished. Nobody has deliberately chosen another app seconds
+                        // after a power cut, so within this window the flag means nothing.
+                        userLeftDashboard = false
+                        // Still yield to a call or a cast — those are real.
+                        if (!inCall && !TvAppActivity.isShowing()) bringDashboardToFront()
+                    }, d)
+                }
+            }
+        }
+
         if (intent?.action == ACTION_APPLY_INTERCOM) {
             prefs ?: Prefs(this).also { prefs = it }
             hideIntercomOverlays()          // rebuild from the (possibly edited) config
@@ -729,6 +768,7 @@ class BridgeService : Service() {
                         sensorBridge?.republishTemperature()
                     }
                     reconcileDreamSlot(p)
+        reconcileOsTimeout(p)
                     lastActivityMs = System.currentTimeMillis()  // give the new timeout a fresh start
                 }.onFailure { Log.w(TAG, "applyDisplaySettings failed: ${it.message}") }
             }
@@ -2891,6 +2931,37 @@ class BridgeService : Service() {
                 p.dreamRestoreDefault = ""
             }
         }.onFailure { Log.w(TAG, "dream slot reconcile failed: ${it.message}") }
+    }
+
+    /**
+     * Shorten (or restore) Portal OS's own screen timeout — its "ambient display" setting, which
+     * is plain `system screen_off_timeout` and ships at five minutes.
+     *
+     * It does nothing while our dashboard is in front, because FLAG_KEEP_SCREEN_ON blocks the
+     * timeout path outright; it only applies in the windows where something else owns the screen,
+     * after a boot or a foreground steal. Reported from the field: dropping it to a minute was
+     * what let the app be "left alone on top of the launcher", because the OS reaches its
+     * ambient/sleep decision sooner and the launcher stops sitting there.
+     *
+     * Off by default and fully reversible — the previous value is remembered and put back — since
+     * this is a system-wide setting the owner may have chosen deliberately. Needs WRITE_SETTINGS,
+     * which the app already holds for the brightness slider.
+     */
+    private fun reconcileOsTimeout(p: Prefs) {
+        runCatching {
+            val cur = Settings.System.getInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, -1)
+            if (p.shortenOsTimeout) {
+                if (cur == OS_TIMEOUT_SHORT_MS) return
+                // Record once, or a second pass would save our own value as the thing to restore.
+                if (p.osTimeoutRestore < 0 && cur > 0) p.osTimeoutRestore = cur
+                Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, OS_TIMEOUT_SHORT_MS)
+                Log.i(TAG, "os timeout: shortened to ${OS_TIMEOUT_SHORT_MS}ms (was ${cur}ms)")
+            } else if (p.osTimeoutRestore >= 0) {
+                Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, p.osTimeoutRestore)
+                Log.i(TAG, "os timeout: restored to ${p.osTimeoutRestore}ms")
+                p.osTimeoutRestore = -1
+            }
+        }.onFailure { Log.w(TAG, "os timeout reconcile failed: ${it.message}") }
     }
 
     private fun handleScreensaverHoldCommand(payload: String, p: Prefs) {

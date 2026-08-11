@@ -4,6 +4,31 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.20.1 — Comes back after a power cut, and its own settings screen
+
+**Added**
+- **Show dashboard after a restart** (on by default). After a reboot or a power cut the
+  Portal puts the dashboard back on screen instead of sitting on the launcher. It
+  keeps asserting itself for the first minute, because launchers tend to grab the
+  screen back while the system settles — so this works whichever launcher you use,
+  and needs nothing configured in the launcher itself.
+- **Shorten the Portal's own screen timeout** (off by default). Sets Portal OS's
+  ambient display timeout to 1 minute, where it ships at 5. It has no effect while
+  the dashboard is on screen; it only shortens how long something else can sit there
+  after a restart. Turning it off restores your original value. New Portals get this
+  set during provisioning.
+- **The screensaver has its own settings screen** — Display & Presence had grown too
+  long to find anything in. Everything for the photo frame now lives under
+  **Display & Presence → Photo Screensaver settings**.
+
+**Fixed**
+- **"Check for Updates" now shows the release notes.** The daily update prompt always
+  did; checking manually gave you a version number and nothing else, so you had no
+  idea what you were updating to. This is that screen.
+- **Turning the screensaver on without an address** no longer leaves you with a
+  feature that silently does nothing. The address is now required, and highlighted
+  until you fill it in.
+
 ## v1.20.0 — A photo screensaver, and a Portal that stays out of your way
 
 **Added**

@@ -265,14 +265,31 @@ class SystemSettingsActivity : AppCompatActivity() {
     }
 
     private fun promptUpdate(btn: Button, rel: Updater.Release) {
+        // Show what you are updating TO. The daily prompt (UpdatePromptActivity) has always
+        // shown the release notes; this manual path did not, so anyone who checked for updates
+        // here got a bare version number and no idea what was changing. The notes are already
+        // fetched — Updater.Release carries the release body — they simply were not displayed.
+        val notes = rel.notes.trim().ifBlank { "(no release notes)" }
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Update available")
-            .setMessage("A newer version is available:\n\nv${BuildConfig.VERSION_NAME}  →  v${rel.version}\n\n" +
-                "Download and install it now? Your settings are kept.")
+            .setTitle("Update available — v${rel.version}")
+            .setMessage("This Portal is on v${BuildConfig.VERSION_NAME}. Your settings are kept.\n\n" +
+                "${prettyNotes(notes)}\n\nDownload and install it now?")
             .setPositiveButton("Update") { _, _ -> downloadAndInstall(btn, rel) }
             .setNegativeButton("Later", null)
             .show()
     }
+
+    /**
+     * The release body is GitHub markdown; an AlertDialog renders none of it. Strip the syntax
+     * that would otherwise show up as literal punctuation, rather than leaving people to read
+     * "**Added**" and "## v1.20.1" on a wall panel. The dialog scrolls, so length is fine.
+     */
+    private fun prettyNotes(md: String): String = md
+        .replace(Regex("(?m)^#{1,6}\\s*"), "")     // ## headings
+        .replace(Regex("\\*\\*(.+?)\\*\\*"), "$1") // **bold**
+        .replace(Regex("(?m)^\\s*-\\s+"), "• ")    // list bullets
+        .replace(Regex("`([^`]*)`"), "$1")         // `code`
+        .trim()
 
     private fun downloadAndInstall(btn: Button, rel: Updater.Release) {
         if (!Updater.canInstall(this)) { showInstallPermDialog(); return }

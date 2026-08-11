@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/btn_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="←  Back"
+                android:backgroundTint="#37474F" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Photo Screensaver"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="@color/onSurface"
+                android:layout_marginStart="16dp" />
+        </LinearLayout>
+
+        <Switch
+            android:id="@+id/sw_screensaver"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Photo screensaver"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Shows photos over the dashboard when nothing has been touched for a while. Tap the left or right third to move between photos; tap the middle to go back to the dashboard. The camera keeps streaming behind the photos."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="12dp" />
+
+        <EditText
+            android:id="@+id/et_screensaver_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="http://192.168.0.10:8355"
+            android:inputType="textUri"
+            android:textColor="@color/onSurface"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tv_url_help"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Address of your ImmichFrame or Immich Kiosk page. Which photos appear is configured there, not here."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Start photos after"
+                android:textSize="14sp"
+                android:textColor="@color/onSurface" />
+
+            <EditText
+                android:id="@+id/et_screensaver_idle"
+                android:layout_width="72dp"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:gravity="center"
+                android:textColor="@color/onSurface"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="seconds idle"
+                android:textSize="14sp"
+                android:textColor="@color/onSurface" />
+        </LinearLayout>
+
+        <Switch
+            android:id="@+id/sw_screensaver_on_wake"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Wake to photos"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="When the screen wakes, show the photos instead of the dashboard. Tap the middle of the screen to get to the dashboard."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="12dp" />
+
+        <Switch
+            android:id="@+id/sw_screensaver_prestage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Keep photos ready while asleep"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Loads the photo page behind the dark screen so it appears instantly, instead of showing a blank page while it starts up. Uses memory the whole time the Portal is asleep — leave it off if the Portal feels short of memory."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="12dp" />
+
+        <Switch
+            android:id="@+id/sw_screensaver_presence"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Only when someone's there"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Photos only appear while presence is detected, so an empty room goes to the screen-off timer instead of showing a slideshow to nobody. Needs presence detection on."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="20dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="You can also turn the screensaver on and off from Home Assistant, dismiss it on one Portal or on all of them at once, and set how long a dismiss keeps the photos away."
+            android:textSize="12sp"
+            android:textColor="@color/onSurface"
+            android:alpha="0.5"
+            android:layout_marginBottom="20dp" />
+
+        <Button
+            android:id="@+id/btn_back_bottom"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Back" />
+    </LinearLayout>
+</ScrollView>

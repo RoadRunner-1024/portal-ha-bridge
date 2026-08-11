@@ -177,6 +177,42 @@
         </LinearLayout>
 
         <Switch
+            android:id="@+id/sw_shorten_os_timeout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Shorten the Portal's own screen timeout"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Sets the Portal's ambient display timeout to 1 minute (it ships at 5). This has no effect while the dashboard is on screen — it only shortens how long the launcher can sit there after a restart or if something else takes over. Turning this off puts your original value back."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="20dp" />
+
+        <Switch
+            android:id="@+id/sw_start_on_boot"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Show dashboard after a restart"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="After a reboot or a power cut, put the dashboard back on screen instead of leaving the Portal on the launcher. The bridge itself always starts on boot either way — this only decides what you see."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="20dp" />
+
+        <Switch
             android:id="@+id/sw_claim_dream"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -222,125 +258,19 @@
             android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp" />
 
-        <Switch
-            android:id="@+id/sw_screensaver"
+        <Button
+            android:id="@+id/btn_screensaver_settings"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Photo screensaver"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/onSurface"
-            android:paddingVertical="12dp" />
+            android:text="Photo Screensaver settings" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Shows photos over the dashboard when nothing has been touched for a while. Tap the left or right third to move between photos; tap the middle to go back to the dashboard. The camera keeps streaming behind the photos."
+            android:text="Show your photos over the dashboard when the Portal has been left alone. Set the address, timings and wake behaviour there."
             android:textSize="12sp"
             android:textColor="@color/hint"
-            android:layout_marginBottom="12dp" />
-
-        <EditText
-            android:id="@+id/et_screensaver_url"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="http://192.168.0.10:8355"
-            android:inputType="textUri"
-            android:textColor="@color/onSurface"
-            android:layout_marginBottom="4dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Address of your ImmichFrame or Immich Kiosk page. Which photos appear is configured there, not here."
-            android:textSize="12sp"
-            android:textColor="@color/hint"
-            android:layout_marginBottom="12dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Start photos after"
-                android:textSize="14sp"
-                android:textColor="@color/onSurface" />
-
-            <EditText
-                android:id="@+id/et_screensaver_idle"
-                android:layout_width="72dp"
-                android:layout_height="wrap_content"
-                android:inputType="number"
-                android:gravity="center"
-                android:textColor="@color/onSurface"
-                android:layout_marginStart="12dp"
-                android:layout_marginEnd="8dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="seconds idle"
-                android:textSize="14sp"
-                android:textColor="@color/onSurface" />
-        </LinearLayout>
-
-        <Switch
-            android:id="@+id/sw_screensaver_on_wake"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Wake to photos"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/onSurface"
-            android:paddingVertical="12dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="When the screen wakes, show the photos instead of the dashboard. Tap the middle of the screen to get to the dashboard."
-            android:textSize="12sp"
-            android:textColor="@color/hint"
-            android:layout_marginBottom="12dp" />
-
-        <Switch
-            android:id="@+id/sw_screensaver_prestage"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Keep photos ready while asleep"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/onSurface"
-            android:paddingVertical="12dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Loads the photo page behind the dark screen so it appears instantly, instead of showing a blank page while it starts up. Uses memory the whole time the Portal is asleep — leave it off if the Portal feels short of memory."
-            android:textSize="12sp"
-            android:textColor="@color/hint"
-            android:layout_marginBottom="12dp" />
-
-        <Switch
-            android:id="@+id/sw_screensaver_presence"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Only when someone's there"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/onSurface"
-            android:paddingVertical="12dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Photos only appear while presence is detected, so an empty room goes to the screen-off timer instead of showing a slideshow to nobody. Needs presence detection on."
-            android:textSize="12sp"
-            android:textColor="@color/hint"
+            android:layout_marginTop="4dp"
             android:layout_marginBottom="20dp" />
 
         <TextView

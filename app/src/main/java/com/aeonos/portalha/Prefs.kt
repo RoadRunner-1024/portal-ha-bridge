@@ -418,6 +418,29 @@ class Prefs(private val context: Context) {
         get() = sp.getInt("screensaver_dismiss_hold_secs", 60)
         set(v) = sp.edit().putInt("screensaver_dismiss_hold_secs", v.coerceIn(0, 3600)).apply()
 
+    // Shorten Portal OS's own screen timeout (its "ambient display" setting, plain
+    // system screen_off_timeout, 5 minutes by default). It has no effect while our dashboard is
+    // in front — FLAG_KEEP_SCREEN_ON blocks that path entirely — so this only matters in the
+    // windows where something else owns the screen: after a boot, or after a foreground steal.
+    // A shorter value gets the OS to its ambient/sleep decision sooner, so the launcher spends
+    // less time sitting on the display. Off by default: it is a system-wide setting the owner
+    // may have chosen on purpose, and the previous value is restored when this is turned off.
+    var shortenOsTimeout: Boolean
+        get() = sp.getBoolean("shorten_os_timeout", false)
+        set(v) = sp.edit().putBoolean("shorten_os_timeout", v).apply()
+
+    var osTimeoutRestore: Int
+        get() = sp.getInt("os_timeout_restore", -1)
+        set(v) = sp.edit().putInt("os_timeout_restore", v).apply()
+
+    // After a reboot — usually a power cut — put the dashboard back on screen rather than
+    // leaving the Portal on the launcher. The bridge service itself always starts on boot; this
+    // is only about who owns the screen. Default ON, because that is the whole point of a wall
+    // panel; off suits a Portal that is also used as a tablet.
+    var startOnBoot: Boolean
+        get() = sp.getBoolean("start_on_boot", true)
+        set(v) = sp.edit().putBoolean("start_on_boot", v).apply()
+
     // Register our own blank screensaver as the system one. Default ON: Meta's power policy
     // starts a dream at every screen timeout whatever the settings say, and a dream window
     // outranks any overlay, so without this you get a frame of whatever screensaver the launcher
