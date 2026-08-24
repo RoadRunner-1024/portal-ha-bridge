@@ -137,6 +137,10 @@ class BridgeService : Service() {
         private const val DREAM_COMPONENTS = "screensaver_components"
         private const val DREAM_DEFAULT = "screensaver_default_component"
 
+        // Never rewrite the screensaver slot more often than this — bounds a two-app tug-of-war
+        // to a slow alternation rather than a hot loop on a Settings key.
+        private const val DREAM_RECLAIM_MIN_MS = 5_000L
+
         // How long after screen-on to keep the wake covered. Long enough for the dashboard to be
         // resumed and drawn, short enough not to feel like a slow wake.
         private const val SLEEP_COVER_REVEAL_MS = 700L
@@ -309,6 +313,7 @@ class BridgeService : Service() {
     private var debugOwwReceiver: BroadcastReceiver? = null
     private var debugScreenReceiver: BroadcastReceiver? = null
     private var debugScreensaverReceiver: BroadcastReceiver? = null
+    private var debugConfigReceiver: BroadcastReceiver? = null
     private var sensorBridge: SensorBridge? = null
     private var soundMonitor: SoundMonitor? = null
     private var dialServer: DialServer? = null
@@ -648,6 +653,7 @@ class BridgeService : Service() {
         lastActivityMs = System.currentTimeMillis()
         reconcilePresence(p)
         reconcileDreamSlot(p)
+        startDreamWatch()          // and take it back whenever the launcher grabs it
         reconcileOsTimeout(p)
         timeoutHandler.post(timeoutRunnable)
 
@@ -780,6 +786,8 @@ class BridgeService : Service() {
         running.set(false)
         runCatching { screensaver.hide() }
         runCatching { sleepCover.hide() }   // never outlive the service holding the screen black
+        dreamObserver?.let { runCatching { contentResolver.unregisterContentObserver(it) } }
+        dreamObserver = null
         commandExecutor.shutdownNow()
         runCatching { mqtt?.disconnect(0) }
         screenReceiver?.let { unregisterReceiver(it) }
@@ -1097,6 +1105,35 @@ class BridgeService : Service() {
             registerReceiver(debugScreensaverReceiver, IntentFilter("com.aeonos.portalha.DEBUG_SCREENSAVER"))
         }
 
+        // Debug: fill in the connection settings from adb, so a freshly provisioned Portal
+        // doesn't have to be typed into by hand on a touchscreen:
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_CONFIG \
+        //     --es name Portal-Go --es broker 192.168.0.39 --ei port 1883 \
+        //     --es user mqttuser --es haUrl http://192.168.0.39:8123
+        // ★Deliberately NO password: it would sit in shell history and the device log. That one
+        // stays a typed-in-person field.
+        debugConfigReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val p = prefs ?: return
+                var changed = false
+                intent.getStringExtra("name")?.let { p.deviceName = it; changed = true }
+                intent.getStringExtra("broker")?.let { p.brokerHost = it; changed = true }
+                intent.getStringExtra("user")?.let { p.username = it; changed = true }
+                intent.getStringExtra("haUrl")?.let { p.haUrl = it; changed = true }
+                if (intent.hasExtra("port")) {
+                    p.brokerPort = intent.getIntExtra("port", 1883); changed = true
+                }
+                if (!changed) return
+                Log.i(TAG, "config: name='${p.deviceName}' broker='${p.brokerHost}:${p.brokerPort}' " +
+                    "user='${p.username}' haUrl='${p.haUrl}' (password unchanged)")
+                // Reconnect on the new details rather than waiting for a restart.
+                restartMqtt()
+            }
+        }
+        runCatching {
+            registerReceiver(debugConfigReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CONFIG"))
+        }
+
         // Debug: open a settings screen from adb. The settings activities are
         // exported=false (nothing else should be able to launch them), so `am start`
         // is refused — this is the smoke-test route after UI changes:
@@ -1132,6 +1169,17 @@ class BridgeService : Service() {
     }
 
     // ── MQTT loop ─────────────────────────────────────────────────────────────
+
+    /**
+     * Drop the current broker connection so [mqttLoop] rebuilds it from the current prefs.
+     * Used after the connection settings are changed from outside the UI; the loop's own retry
+     * is what actually reconnects, so this only has to make the existing session end.
+     */
+    private fun restartMqtt() {
+        runCatching { mqtt?.disconnect(0) }
+        mqtt = null
+        Log.i(TAG, "config: dropped the broker connection — reconnecting with the new settings")
+    }
 
     private fun mqttLoop() {
         var backoff = 5_000L
@@ -1935,6 +1983,9 @@ class BridgeService : Service() {
 
     private val screensaver by lazy { ScreensaverOverlay(this) }
     private val sleepCover by lazy { SleepCover(this) }
+    private var dreamObserver: android.database.ContentObserver? = null
+    @Volatile private var lastDreamClaimMs = 0L
+    @Volatile private var dreamFightLogged = false
     // Time of the last REAL interaction (a touch or key on the dashboard). Deliberately not
     // lastActivityMs: presence resets that one to hold the screen awake, so a photo frame keyed
     // off it could never appear while somebody was standing in front of the Portal — which is
@@ -2907,6 +2958,34 @@ class BridgeService : Service() {
      * is what the framework falls back to. The previous pair is remembered so switching this off
      * restores exactly what was there.
      */
+    /**
+     * Watch the screensaver slot and take it back if anything else claims it.
+     *
+     * Claiming once at startup is not enough on a real Portal: the launcher owns this setting too,
+     * and Immortal rewrites it to its own PhotoDreamService every time its home screen runs —
+     * which is every boot and every HOME kick. Reconciling only at service start meant we lost
+     * the slot within minutes and never noticed, so the wake-flash fix quietly stopped working.
+     *
+     * A ContentObserver makes us the last writer without polling. Our own write fires this too,
+     * but the reconcile no-ops when the value already reads as ours, so it settles immediately
+     * rather than echoing.
+     */
+    private fun startDreamWatch() {
+        if (dreamObserver != null) return
+        val obs = object : android.database.ContentObserver(wakeHandler) {
+            override fun onChange(selfChange: Boolean) {
+                val p = prefs ?: return
+                if (p.claimDreamSlot) reconcileDreamSlot(p)
+            }
+        }
+        runCatching {
+            contentResolver.registerContentObserver(
+                Settings.Secure.getUriFor(DREAM_COMPONENTS), false, obs)
+            dreamObserver = obs
+            Log.i(TAG, "dream: watching the screensaver slot")
+        }.onFailure { Log.w(TAG, "dream: could not watch the slot: ${it.message}") }
+    }
+
     private fun reconcileDreamSlot(p: Prefs) {
         runCatching {
             val ours = "$packageName/.BlankDreamService"
@@ -2914,6 +2993,20 @@ class BridgeService : Service() {
             val cur = Settings.Secure.getString(cr, DREAM_COMPONENTS) ?: ""
             if (p.claimDreamSlot) {
                 if (cur == ours) return
+                // Anti-thrash. Claiming is normally a one-off, but the slot is shared with
+                // whatever launcher is installed and Immortal rewrites it every time its home
+                // screen runs. If something ever wrote back instantly and forever, two apps
+                // would spin on this key; refusing to write twice in quick succession bounds
+                // that to a slow alternation instead of a hot loop.
+                val now = System.currentTimeMillis()
+                if (now - lastDreamClaimMs < DREAM_RECLAIM_MIN_MS) {
+                    if (!dreamFightLogged) {
+                        dreamFightLogged = true
+                        Log.w(TAG, "dream: something keeps taking the screensaver slot back ('$cur') — backing off")
+                    }
+                    return
+                }
+                lastDreamClaimMs = now
                 // Only record the first time, or a second pass would save our own value as the
                 // thing to restore and the original would be lost forever.
                 if (p.dreamRestoreComponents.isBlank()) {

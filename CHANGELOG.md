@@ -4,6 +4,27 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.20.2 — Immich Kiosk navigation, and the blank screensaver actually sticks
+
+**Fixed**
+- **Tapping left and right now works on Immich Kiosk.** The middle-tap exit worked
+  because that is ours, but the photo never changed: Kiosk listens for a **key-up** on
+  the page body, while ImmichFrame listens for a **key-down** on the window, and we
+  were only sending the latter. Both are now satisfied by one event, so navigation
+  behaves the same whichever frame you point it at.
+- **"Blank screen while asleep" no longer gets quietly undone.** The launcher rewrites
+  the system screensaver setting every time its home screen appears — which is every
+  restart and every time something sends the Portal home — so our blank screensaver was
+  being replaced within minutes of being set, and the flash on wake came back. The
+  setting is now watched and reclaimed immediately. If you had this turned on and were
+  still seeing a flash of the launcher's screensaver, this is why.
+
+**For setup**
+- A Portal can now have its device name, broker, port and Home Assistant address filled
+  in over USB during provisioning, instead of being typed on the panel. Passwords and
+  tokens are deliberately excluded — those are still entered on the device or, for the
+  Home Assistant token, sent from Home Assistant itself.
+
 ## v1.20.1 — Comes back after a power cut, and its own settings screen
 
 **Added**

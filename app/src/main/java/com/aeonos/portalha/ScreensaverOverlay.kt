@@ -206,14 +206,34 @@ class ScreensaverOverlay(private val context: Context) {
         }
     }
 
-    /** Both frames bind their navigation to a `window` keydown and read only `event.key`. */
+    /**
+     * Drive the page's own navigation with a synthetic key event.
+     *
+     * The two frames bind this quite differently, and the dispatch has to satisfy both:
+     *  - ImmichFrame: `window.addEventListener("keydown", …)`, switching on `event.key`.
+     *  - Immich Kiosk: htmx, declared in the HTML rather than its JS bundle —
+     *    `hx-trigger="… keyup[key=='ArrowLeft'] from:body …"`. So it wants **keyup**, and
+     *    its listener sits on **body**.
+     *
+     * Hence: dispatch on `document.body` with `bubbles:true`, and send both keydown and keyup.
+     * Bubbling carries it body → document → window, so listeners at any of those three levels
+     * fire, and `event.target` is `document.body` — which Kiosk's own JS handler also requires
+     * (`if (e.target === document.body)`). Dispatching on `window`, as this used to, reaches
+     * window listeners ONLY: events do not propagate downward, which is exactly why Kiosk
+     * navigation did nothing while the centre-tap exit still worked.
+     *
+     * `code` is set alongside `key` because Kiosk's JS switch reads `event.code`; for the arrows
+     * the two strings are identical, so one value serves both.
+     */
     private fun sendKey(key: String, what: String) {
         val wv = web ?: return
         android.util.Log.i(TAG, "screensaver: $what")
         runCatching {
             wv.evaluateJavascript(
-                "window.dispatchEvent(new KeyboardEvent('keydown'," +
-                    "{key:'$key',bubbles:true,cancelable:true}));",
+                "(function(){var t=document.body||document.documentElement;" +
+                    "['keydown','keyup'].forEach(function(ty){" +
+                    "t.dispatchEvent(new KeyboardEvent(ty," +
+                    "{key:'$key',code:'$key',bubbles:true,cancelable:true}));});})();",
                 null
             )
         }
