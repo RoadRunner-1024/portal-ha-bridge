@@ -239,11 +239,29 @@ class DashboardActivity : AppCompatActivity() {
         BridgeService.noteUserInteraction()
     }
 
-    // The user chose to go somewhere else — Home, or launching another app. Android calls this
-    // ONLY for a deliberate departure; when something steals the foreground (Meta's launcher
-    // asserting HOME on its own) the activity is paused with no leave hint at all. That is the
-    // difference between "recover a stranded panel" and "yank Netflix off the screen", so the
-    // service needs to know which happened.
+    // ★A SEPARATE, STRICTER "a human touched this" signal, and it cannot be onUserInteraction:
+    // AOSP's Activity.performUserLeaving() calls onUserInteraction() immediately before
+    // onUserLeaveHint(), so that timestamp is ALWAYS ~1 ms old by the time the service is asked
+    // who left — measured, and it silently defeated the first version of the steal detector.
+    // dispatchTouchEvent/dispatchKeyEvent see real input only, including taps the WebView
+    // consumes, so these are what tell a person apart from an app barging in.
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        BridgeService.noteUserInput()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchKeyEvent(ev: android.view.KeyEvent): Boolean {
+        BridgeService.noteUserInput()
+        return super.dispatchKeyEvent(ev)
+    }
+
+    // Someone — or something — is putting another screen in front of us. This catches a
+    // deliberate departure (Home, launching an app), which must NOT be undone: "recover a
+    // stranded panel" and "yank Netflix off the screen" are the same code path otherwise.
+    // ⚠It also fires when an app launches ITSELF over us: an Alexa announcement does exactly
+    // that, and Android reports it as userLeaving=true, indistinguishable from a Home press.
+    // The service does the separating (see noteUserLeftDashboard) — don't assume this means
+    // the user chose anything.
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         BridgeService.noteUserLeftDashboard()

@@ -129,6 +129,40 @@ class BridgeService : Service() {
         private const val RTSP_RECOVER_MAX_ATTEMPTS = 6
         private const val DASHBOARD_RETURN_MS = 90_000L
 
+        // ── Telling "the user left" apart from "an app barged in" ─────────────────────
+        // Android reports the two IDENTICALLY. Measured with an Alexa announcement
+        // (2026-08-28): falcon starts its AriaActivity without FLAG_ACTIVITY_NO_USER_ACTION,
+        // so the framework logs `am_pause_activity … userLeaving=true` and calls
+        // onUserLeaveHint on us exactly as a real Home press would. Taking that at face value
+        // switched auto-return off for the whole announcement.
+        // The discriminator is a touch: a person going elsewhere has just tapped or pressed
+        // something on OUR panel; an app putting itself in front has not. Backed up by a real
+        // Home press, which also broadcasts CLOSE_SYSTEM_DIALOGS reason=homekey.
+        private const val USER_LEAVE_TOUCH_MS = 5_000L
+        // First check after an untouched steal. Deliberately short: the cost of being in the
+        // background is not cosmetic (see noteForegroundStolen).
+        private const val STOLEN_RETURN_GRACE_MS = 600L
+        // Poll fast. This runs ONLY while something has the front off us, and the interval is
+        // pure added latency — at 2 s it was contributing more delay than the hold below.
+        private const val STOLEN_RETURN_POLL_MS = 400L
+        // How long the intruder must stay quiet before we take the screen back. The thing this
+        // has to clear is falcon re-asserting AriaActivity (a second START with
+        // REORDER_TO_FRONT) shortly AFTER its announcement audio ends — measured across four
+        // real announcements at 455 / 580 / 449 / 419 ms. 1.2 s is a little over twice the
+        // worst of those, and lands the return ~1.5 s after she stops talking.
+        private const val STOLEN_QUIET_MS = 1_200L
+        // ★Ping-pong insurance. Once in testing, falcon took the front back ~0.5 s after we
+        // returned — the hold above cannot prevent that, because the assert came after a
+        // legitimately quiet gap. So each steal that arrives hard on the heels of our own
+        // return lengthens the next hold instead of trading flips with it. Bounded, and reset
+        // by any steal that isn't part of a flap.
+        private const val STOLEN_REFLAP_MS = 3_000L
+        private const val STOLEN_QUIET_STEP_MS = 1_000L
+        private const val STOLEN_FLAP_MAX = 3
+        // Something that genuinely owns the screen this long isn't a stray announcement.
+        // Stop chasing it; a screen-on reclaim or the user will sort it out.
+        private const val STOLEN_RETURN_MAX_MS = 120_000L
+
         // What "shorten the OS screen timeout" sets it to. One minute is what the field report
         // used; long enough not to fight anything, short enough that the OS stops waiting.
         private const val OS_TIMEOUT_SHORT_MS = 60_000
@@ -224,19 +258,48 @@ class BridgeService : Service() {
         // genuinely front again, so an actual launcher steal after that still self-heals.
         @Volatile private var userLeftDashboard = false
 
+        // Called from DashboardActivity.onUserLeaveHint — which fires both when someone
+        // deliberately walks away from the panel AND when an app launches itself over us.
+        // See USER_LEAVE_TOUCH_MS for why those are indistinguishable and how we separate them.
         fun noteUserLeftDashboard() {
-            if (!userLeftDashboard) Log.i(TAG, "dashboard: user switched to another app — auto-return disabled until they come back")
+            val svc = instance
+            val now = System.currentTimeMillis()
+            val touchAge = if (svc == null || svc.lastInputMs == 0L) -1L else now - svc.lastInputMs
+            val homeAge = if (svc == null || svc.lastHomeKeyMs == 0L) -1L else now - svc.lastHomeKeyMs
+            // With no service there is nothing to return the dashboard anyway, so fall back to
+            // the cautious reading: assume the person meant it.
+            val deliberate = svc == null ||
+                touchAge in 0..USER_LEAVE_TOUCH_MS ||
+                homeAge in 0..USER_LEAVE_TOUCH_MS
+            // Not deliberate: leave userLeftDashboard alone and say nothing more. The pause that
+            // follows this hint is what arms the watchdog (see setDashboardForeground), so that
+            // one path covers both a steal that bothers to send a hint and one that doesn't.
+            if (!deliberate) {
+                Log.i(TAG, "dashboard: leave hint with no touch behind it (touch ${touchAge}ms ago) — treating as a steal, not a choice")
+                return
+            }
+            if (!userLeftDashboard) Log.i(TAG, "dashboard: user switched to another app (touch ${touchAge}ms ago, home key ${homeAge}ms ago) — auto-return disabled until they come back")
             userLeftDashboard = true
         }
 
         fun setDashboardForeground(fg: Boolean) {
             dashboardForeground = fg
-            if (fg) userLeftDashboard = false
+            if (fg) { userLeftDashboard = false; instance?.clearForegroundSteal() }
+            // We just lost the front and nothing marked it a deliberate departure. That covers
+            // both shapes of steal: an app that sends a leave hint (an Alexa announcement — see
+            // noteUserLeftDashboard) and one that sends none at all (a launcher asserting HOME
+            // from the background, which pauses us with no hint whatsoever — measured).
+            else if (!userLeftDashboard) instance?.noteForegroundStolen()
             instance?.reconcileIntercomOverlays()
         }
 
         // A touch or key reached the dashboard — restart the photo-frame countdown.
         fun noteUserInteraction() { instance?.lastInteractionMs = System.currentTimeMillis() }
+
+        // Real input only — see DashboardActivity.dispatchTouchEvent for why this can't just
+        // read lastInteractionMs. Starts at 0 so a freshly started service correctly believes
+        // nobody has touched anything yet.
+        fun noteUserInput() { instance?.lastInputMs = System.currentTimeMillis() }
 
         fun start(context: Context) =
             context.startForegroundService(Intent(context, BridgeService::class.java))
@@ -415,6 +478,139 @@ class BridgeService : Service() {
         wakeHandler.postDelayed(dashboardReturn, DASHBOARD_RETURN_MS)
     }
 
+    // ── An app took the front and nobody asked it to ───────────────────────────────
+    // Set by noteUserLeftDashboard when the departure had no touch behind it. The known
+    // culprits are an Alexa announcement (falcon's AriaActivity, rendered black when the
+    // announcement has no visual) and a launcher firing its own HOME intent.
+    //
+    // ★Why this is worth chasing rather than tolerating: on Android 10 a uid that is not
+    // foreground has its recorder SILENCED — measured during an announcement as
+    // "AudioPolicyService … onUidForeground() silencing for 10130 -> 0" the instant falcon's
+    // card appeared, and back to 1 only when it closed itself 34.7 s later. For that whole
+    // window our AudioRecord was fed digital silence, so the wake word could not fire and the
+    // Portal could not hear "alexa" at all. Nobody can opt out either: even falcon fails the
+    // check for Meta's RECORD_AUDIO_PRIVILEGED. Being foreground IS the microphone, so
+    // returning the dashboard is what makes the Portal able to listen again — not decoration.
+    //
+    // We still wait for the intruder to finish, because interrupting an announcement to fix
+    // an announcement would be silly. See STOLEN_QUIET_MS for why "finished" needs a hold.
+    @Volatile private var foregroundStolenMs = 0L
+    @Volatile private var stolenQuietSinceMs = 0L
+    @Volatile private var stolenLogged = false
+    // When we last took the screen back, and how many steals in a row have landed right on top
+    // of one of those returns — see STOLEN_REFLAP_MS.
+    @Volatile private var stolenReturnedMs = 0L
+    @Volatile private var stolenFlaps = 0
+    // Set by the CLOSE_SYSTEM_DIALOGS receiver; only a genuine Home press produces it, which
+    // covers the one deliberate departure that reaches us without touching our window first.
+    @Volatile private var lastHomeKeyMs = 0L
+
+    // Last REAL touch or key on the dashboard (dispatchTouchEvent/dispatchKeyEvent), as opposed
+    // to lastInteractionMs, which Android also stamps on the way out of the activity.
+    @Volatile private var lastInputMs = 0L
+
+    // How many of OUR activities are resumed. Process-wide via the Application callbacks, so it
+    // covers every settings screen without each one having to report in.
+    @Volatile private var ourActivitiesResumed = 0
+    private val ourActivityWatch = object : android.app.Application.ActivityLifecycleCallbacks {
+        override fun onActivityResumed(a: android.app.Activity) { ourActivitiesResumed++ }
+        override fun onActivityPaused(a: android.app.Activity) {
+            if (ourActivitiesResumed > 0) ourActivitiesResumed--
+        }
+        override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) {}
+        override fun onActivityStarted(a: android.app.Activity) {}
+        override fun onActivityStopped(a: android.app.Activity) {}
+        override fun onActivitySaveInstanceState(a: android.app.Activity, b: android.os.Bundle) {}
+        override fun onActivityDestroyed(a: android.app.Activity) {}
+    }
+
+    private fun noteForegroundStolen() {
+        if (foregroundStolenMs != 0L) return          // already watching this one
+        // The screen going to sleep pauses the dashboard too, and that is not a steal — without
+        // this every single sleep would arm a watch and log about it. Nothing is lost: a steal
+        // that happens in the dark is picked up by reclaimForeground() on the next screen-on.
+        if (!screenOn) return
+        val now = System.currentTimeMillis()
+        // Straight back on top of our own return: whatever this is wants the screen more than
+        // the quiet hold can tell. Give it longer each time rather than trading flips.
+        stolenFlaps = if (stolenReturnedMs != 0L && now - stolenReturnedMs <= STOLEN_REFLAP_MS)
+            minOf(stolenFlaps + 1, STOLEN_FLAP_MAX) else 0
+        if (stolenFlaps > 0) {
+            Log.i(TAG, "dashboard: taken again ${now - stolenReturnedMs}ms after we came back — waiting ${stolenQuietHoldMs()}ms for quiet this time")
+        }
+        foregroundStolenMs = now
+        stolenQuietSinceMs = 0L
+        // Deliberately silent. The screen going off pauses us BEFORE ACTION_SCREEN_OFF arrives
+        // (measured — the guard above misses it), so arming is not yet evidence of anything;
+        // the first poll says whether this is a real steal, and logs there.
+        stolenLogged = false
+        wakeHandler.removeCallbacks(stolenReturn)
+        wakeHandler.postDelayed(stolenReturn, STOLEN_RETURN_GRACE_MS)
+    }
+
+    /** Quiet the intruder must hold, stretched while it keeps grabbing the front straight back. */
+    private fun stolenQuietHoldMs(): Long =
+        STOLEN_QUIET_MS + stolenFlaps * STOLEN_QUIET_STEP_MS
+
+    private fun clearForegroundSteal() {
+        if (foregroundStolenMs == 0L) return
+        foregroundStolenMs = 0L
+        stolenQuietSinceMs = 0L
+        wakeHandler.removeCallbacks(stolenReturn)
+    }
+
+    private val stolenReturn = object : Runnable {
+        override fun run() {
+            val started = foregroundStolenMs
+            if (started == 0L) return
+            // Back on our own — whatever it was let go, or a screen-on reclaim beat us to it.
+            // Must CLEAR, not just return: leaving the timestamp set would make every later
+            // steal a no-op at the "already watching this one" guard.
+            if (dashboardForeground) { clearForegroundSteal(); return }
+            val now = System.currentTimeMillis()
+            if (now - started >= STOLEN_RETURN_MAX_MS) {
+                Log.i(TAG, "dashboard: whatever took the front is still busy after ${STOLEN_RETURN_MAX_MS / 1000}s — leaving it be")
+                clearForegroundSteal()
+                return
+            }
+            // One of our OWN screens is up — settings, the cast receiver. Nothing was stolen,
+            // and dragging the dashboard over a settings page the user is reading would be its
+            // own bug. Checked here rather than at arming time because the outgoing pause
+            // arrives before the incoming resume, so the count is briefly zero in between.
+            if (ourActivitiesResumed > 0) {
+                Log.i(TAG, "dashboard: another of our own screens is up ($ourActivitiesResumed) — nothing was stolen")
+                clearForegroundSteal(); return
+            }
+            // Screen dark: there is no black screen to fix and no reason to light the room.
+            // The screen-on reclaimForeground() covers this now that a steal no longer marks
+            // the departure deliberate, so hand it over rather than poll in the dark.
+            if (!screenOn) { clearForegroundSteal(); return }
+            // Past the cancels, so this really is something sitting on top of us uninvited.
+            if (!stolenLogged) {
+                stolenLogged = true
+                Log.i(TAG, "dashboard: lost the front with nobody asking — returning once it goes quiet")
+            }
+            // Otherwise the usual "is the Portal mid-something real" list, plus Alexa's own
+            // voice and mic so an announcement is never cut off half-spoken.
+            val busy = inCall || TvAppActivity.isShowing() || micYieldedForWake ||
+                assistantSpeaking() || assistantRecording() || falconPlaying()
+            if (busy) {
+                stolenQuietSinceMs = 0L
+                wakeHandler.postDelayed(this, STOLEN_RETURN_POLL_MS)
+                return
+            }
+            if (stolenQuietSinceMs == 0L) stolenQuietSinceMs = now
+            if (now - stolenQuietSinceMs < stolenQuietHoldMs()) {
+                wakeHandler.postDelayed(this, STOLEN_RETURN_POLL_MS)
+                return
+            }
+            Log.i(TAG, "dashboard: front was taken ${now - started}ms ago and has been quiet ${now - stolenQuietSinceMs}ms — coming back")
+            stolenReturnedMs = now
+            clearForegroundSteal()
+            bringDashboardToFront()
+        }
+    }
+
     // start()/startStream() report success even when Android refused the camera
     // (A10 blocks opening from the background) — the encoder then never produces
     // video and clients get "video info is null" forever. Verify a few seconds
@@ -531,6 +727,7 @@ class BridgeService : Service() {
         installRtspCrashGuard()
         createChannel()
         startForeground(NOTIF_ID, notification("Starting…"))
+        runCatching { application.registerActivityLifecycleCallbacks(ourActivityWatch) }
 
         val p = Prefs(this).also { prefs = it }
         ScreenControl.enableAccessibility(this)
@@ -806,6 +1003,8 @@ class BridgeService : Service() {
         twoWay?.stop(); twoWayOrb?.hide()
         dialServer?.stop(); dialServer = null
         wakeHandler.removeCallbacks(reclaimTimeout); wakeHandler.removeCallbacks(reclaimDebounce)
+        wakeHandler.removeCallbacks(stolenReturn); foregroundStolenMs = 0L
+        runCatching { application.unregisterActivityLifecycleCallbacks(ourActivityWatch) }
         micYieldedForWake = false
         wakeCoverView?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) }; wakeCoverView = null }
         wakeRecordingCallback?.let { cb ->
@@ -907,12 +1106,23 @@ class BridgeService : Service() {
                             screensaver.prestage(p.screensaverUrl) { exitScreensaver() }
                         } else screensaver.hide()
                     }
+                    // A real Home press, and nothing else, broadcasts this with reason=homekey
+                    // (recents counts too — also a deliberate departure). It is the only way
+                    // that particular choice reaches us, because the system consumes the
+                    // gesture itself and no touch is ever dispatched to our window.
+                    Intent.ACTION_CLOSE_SYSTEM_DIALOGS -> {
+                        val reason = intent.getStringExtra("reason")
+                        if (reason == "homekey" || reason == "recentapps") {
+                            lastHomeKeyMs = System.currentTimeMillis()
+                        }
+                    }
                 }
             }
         }
         registerReceiver(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)
         })
     }
 
@@ -2913,6 +3123,10 @@ class BridgeService : Service() {
     /** Centre tap: drop the photos and restart both countdowns so it doesn't reappear at once. */
     private fun exitScreensaver() {
         lastInteractionMs = System.currentTimeMillis()
+        // The photo frame is its own window, so its taps never reach the dashboard's
+        // dispatchTouchEvent — but a centre tap is unambiguously a person, and it should count
+        // as one if they go somewhere else next.
+        lastInputMs = System.currentTimeMillis()
         lastActivityMs = System.currentTimeMillis()
         screensaver.hide()
     }

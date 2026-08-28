@@ -4,6 +4,28 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.20.3 — An Alexa announcement no longer takes the Portal away from you
+
+**Fixed**
+- **The Portal comes back straight after an Alexa announcement.** An announcement — from
+  the Alexa app, or from another Echo — put the Alexa client on screen, usually as a
+  black screen, and left it there for about **35 seconds**. Worse than the look of it:
+  while another app is in front, Android stops our microphone hearing anything at all,
+  so for that whole time the Portal could not respond to "alexa" — there was no way to
+  reply to the announcement, ask a follow-up, or do anything but wait it out or press
+  Home. The dashboard now returns as soon as Alexa has finished speaking, about a
+  second and a half after her last word, which is also when the microphone comes back.
+  The announcement itself is never cut short.
+- **Anything that puts itself in front of the dashboard is now undone, not just the
+  camera case.** Previously the only automatic recovery ran when the camera stream had
+  died, so on a Portal with the camera off nothing ever brought the dashboard back. It
+  now recovers whatever pushed in — an announcement, or the launcher deciding to show
+  its home screen — once that thing has finished.
+- **Leaving the dashboard on purpose still works exactly as before.** If you tap through
+  to another app, or press Home, the Portal stays where you put it and will not drag the
+  dashboard back over the top. The difference between "you left" and "something barged
+  in" is now decided by whether anyone actually touched the screen.
+
 ## v1.20.2 — Immich Kiosk navigation, and the blank screensaver actually sticks
 
 **Fixed**
