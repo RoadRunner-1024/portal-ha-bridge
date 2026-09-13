@@ -282,6 +282,21 @@ class Prefs(private val context: Context) {
         get() = sp.getInt("screen_timeout_minutes", 5)
         set(v) = sp.edit().putInt("screen_timeout_minutes", v.coerceIn(1, 240)).apply()
 
+    // After the dashboard is left for the Meta Calls flow (its launcher / contacts / an active
+    // call), come back to the dashboard this many minutes after the calling app goes idle with
+    // no call in progress. 0 = never return automatically. Only the calling apps are followed —
+    // leaving to anything else (a browser, Netflix) is respected and never overridden.
+    var callReturnMinutes: Int
+        get() = sp.getInt("call_return_minutes", 1)
+        set(v) = sp.edit().putInt("call_return_minutes", v.coerceIn(0, 60)).apply()
+
+    // When we open Meta's launcher for a call it lands on its photo home, which needs one tap
+    // to reveal the Calls tiles. With this on, the accessibility service injects that tap for
+    // you so you go straight to the tiles. On = auto-dismiss; off = leave the tap to the user.
+    var autoDismissCallScreensaver: Boolean
+        get() = sp.getBoolean("auto_dismiss_call_screensaver", true)
+        set(v) = sp.edit().putBoolean("auto_dismiss_call_screensaver", v).apply()
+
     // Normally presence holds the screen awake — someone is standing there, so blanking would
     // be wrong. On a panel that should go dark on a fixed schedule regardless (a bedroom, or a
     // photo frame you want off at night), this lets the countdown run even while the room is

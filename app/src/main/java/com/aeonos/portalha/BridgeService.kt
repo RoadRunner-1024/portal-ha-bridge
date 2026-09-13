@@ -301,6 +301,22 @@ class BridgeService : Service() {
         // nobody has touched anything yet.
         fun noteUserInput() { instance?.lastInputMs = System.currentTimeMillis() }
 
+        // The foreground app changed (reported by ScreenAccessibility). Used to auto-return the
+        // dashboard after the Meta Calls flow — see checkCallReturn.
+        fun noteForegroundPackage(pkg: String) { instance?.onForegroundPackage(pkg) }
+
+        // The Meta calling flow: its launcher (reached by the HA Calls button), the contacts /
+        // dialer UI, and Messenger (the in-call screen). Leaving the dashboard for any of THESE
+        // arms the timed return; leaving for anything else is left strictly alone.
+        private val CALL_RETURN_PKGS = setOf(
+            "com.facebook.alohaapps.launcher",
+            "com.facebook.alohaapps.contacts",
+            "com.facebook.aloha.app.messenger",
+        )
+        private const val META_LAUNCHER_PKG = "com.facebook.alohaapps.launcher"
+        // How long after the launcher appears to inject the dismiss tap — long enough for its
+        // photo home to be drawn and accept the touch, short enough not to be seen as a pause.
+
         fun start(context: Context) =
             context.startForegroundService(Intent(context, BridgeService::class.java))
 
@@ -377,6 +393,8 @@ class BridgeService : Service() {
     private var debugScreenReceiver: BroadcastReceiver? = null
     private var debugScreensaverReceiver: BroadcastReceiver? = null
     private var debugConfigReceiver: BroadcastReceiver? = null
+    private var debugCallReturnReceiver: BroadcastReceiver? = null
+    private var debugTapReceiver: BroadcastReceiver? = null
     private var sensorBridge: SensorBridge? = null
     private var soundMonitor: SoundMonitor? = null
     private var dialServer: DialServer? = null
@@ -508,6 +526,105 @@ class BridgeService : Service() {
     // Last REAL touch or key on the dashboard (dispatchTouchEvent/dispatchKeyEvent), as opposed
     // to lastInteractionMs, which Android also stamps on the way out of the activity.
     @Volatile private var lastInputMs = 0L
+
+    // ── Auto-return from the Meta Calls flow ───────────────────────────────────────
+    // The current foreground package (from ScreenAccessibility) and, while we are sitting in a
+    // calling app with no call, when that idle stretch began. bringDashboardToFront fires once
+    // it has lasted callReturnMinutes. A call in progress, or moving to any non-calling app,
+    // resets the arm — so a real call is never interrupted and an app the user actually chose
+    // (a browser, Netflix) is never overridden.
+    @Volatile private var foregroundPkg: String? = null
+    @Volatile private var callReturnArmedMs = 0L
+    // Test hook: DEBUG_CALL_RETURN --ei secs N overrides the minutes pref with N seconds so the
+    // return can be exercised without waiting three minutes. 0 = use the pref.
+    @Volatile private var callReturnDebugSecs = 0
+
+    private fun onForegroundPackage(pkg: String) {
+        if (pkg == foregroundPkg) return
+        val prev = foregroundPkg
+        foregroundPkg = pkg
+        // Re-evaluate immediately so leaving a calling app (or a call starting) resets the arm
+        // without waiting for the next 15 s tick. Routed through timeoutHandler so every
+        // checkCallReturn runs on the one thread — no race on callReturnArmedMs with the tick.
+        timeoutHandler.post { runCatching { checkCallReturn() } }
+        // Meta's launcher just came to the front (we only ever reach it via the Calls button —
+        // Home is Immortal). It opens on its photo home, which takes one tap to reveal the Calls
+        // tiles; inject that tap so the user lands straight on the tiles. Only on the transition
+        // INTO the launcher, so we never tap twice or interfere once they're on the tiles.
+        if (pkg == META_LAUNCHER_PKG && prev != META_LAUNCHER_PKG &&
+            prefs?.autoDismissCallScreensaver == true) {
+            scheduleCallScreensaverTap()
+        }
+    }
+
+    // One tap, a beat after the launcher home is up, to clear its idle "dream" face (clock on a
+    // dark/photo background) and land on the Calls tiles. ★The spot must be SCREEN CENTRE:
+    // verified on-device that a top-of-screen tap does NOT dismiss the cold dream face (it just
+    // sat on the clock), while a centre tap does. Centre is also safe if the home ever comes up
+    // already past the dream — it falls in the empty gap between the favourites row and the
+    // app-shortcuts card, so it launches nothing.
+    // Dismiss the launcher's idle "dream" face (clock on a photo/abstract background) with a
+    // centre tap so we land on the Calls tiles. ★It has to be a RETRY BURST, not one tap:
+    // verified on-device that a COLD launcher only accepts the dismiss once it has finished
+    // loading — an early tap is swallowed (the face just sits there), while the same tap lands
+    // cleanly several seconds later. A warm launcher dismisses on the first tap. So we tap
+    // centre repeatedly over a window; once the tiles are up every further centre tap falls in
+    // the empty gap between the favourites row and the app-shortcuts card and launches nothing,
+    // and the foregroundPkg guard stops the burst the moment the launcher is no longer in front.
+    private val callTapDelaysMs = longArrayOf(900, 2000, 3500, 5500, 8000, 11000)
+
+    private fun scheduleCallScreensaverTap() {
+        callTapDelaysMs.forEachIndexed { i, d -> tapLauncherCentre(d, "${i + 1}/${callTapDelaysMs.size}") }
+    }
+
+    private fun tapLauncherCentre(delayMs: Long, which: String) {
+        wakeHandler.postDelayed({
+            if (foregroundPkg != META_LAUNCHER_PKG) return@postDelayed   // left the launcher — stop
+            val svc = ScreenAccessibility.instance ?: run {
+                Log.w(TAG, "calls: no accessibility service to dismiss the launcher screensaver")
+                return@postDelayed
+            }
+            Log.i(TAG, "calls: dismissing launcher dream face — centre tap $which")
+            svc.tapFraction(0.5f, 0.5f)
+        }, delayMs)
+    }
+
+    // A voice/video call is live. Reuses the same signal HA sees (USAGE_VOICE_COMMUNICATION
+    // playback from another uid — falcon/Messenger), plus the audio mode for the ring/connect
+    // window before any audio is flowing. Either one means "do not pull the screen away".
+    private fun callInProgress(): Boolean {
+        if (inCall) return true
+        val am = getSystemService(AudioManager::class.java) ?: return false
+        val mode = runCatching { am.mode }.getOrDefault(AudioManager.MODE_NORMAL)
+        return mode == AudioManager.MODE_IN_COMMUNICATION || mode == AudioManager.MODE_IN_CALL
+    }
+
+    // Come back to the dashboard a set time after the user went to make a call and then left the
+    // calling app idle. Runs on the 15 s tick and whenever the foreground app changes.
+    private fun checkCallReturn() {
+        val p = prefs ?: return
+        val windowMs = if (callReturnDebugSecs > 0) callReturnDebugSecs * 1000L
+            else p.callReturnMinutes * 60_000L
+        if (windowMs <= 0L) { callReturnArmedMs = 0L; return }        // feature off
+        if (dashboardForeground) { callReturnArmedMs = 0L; return }   // already home
+        val fg = foregroundPkg
+        // Not in the calling flow — the user is on the home screen or in some other app they
+        // chose. Leave it entirely alone (this is the "don't yank Netflix" rule).
+        if (fg == null || fg !in CALL_RETURN_PKGS) { callReturnArmedMs = 0L; return }
+        // Mid-call (or ringing/connecting): hold, and restart the idle countdown so the return
+        // only ever happens well after the call is over.
+        if (callInProgress()) { callReturnArmedMs = 0L; return }
+        val now = System.currentTimeMillis()
+        if (callReturnArmedMs == 0L) {
+            callReturnArmedMs = now
+            Log.i(TAG, "calls: in ${fg} with no call — will return to dashboard in ${windowMs / 1000}s if it stays idle")
+            return
+        }
+        if (now - callReturnArmedMs < windowMs) return
+        Log.i(TAG, "calls: calling app idle ${(now - callReturnArmedMs) / 1000}s — returning to dashboard")
+        callReturnArmedMs = 0L
+        bringDashboardToFront()
+    }
 
     // How many of OUR activities are resumed. Process-wide via the Application callbacks, so it
     // covers every settings screen without each one having to report in.
@@ -716,6 +833,7 @@ class BridgeService : Service() {
         override fun run() {
             checkScreenTimeout()
             runCatching { checkScreensaver() }.onFailure { Log.w(TAG, "screensaver check: ${it.message}") }
+            runCatching { checkCallReturn() }.onFailure { Log.w(TAG, "call-return check: ${it.message}") }
             timeoutHandler.postDelayed(this, 15_000L)
         }
     }
@@ -996,6 +1114,8 @@ class BridgeService : Service() {
         debugUpdateReceiver?.let { runCatching { unregisterReceiver(it) } }
         debugOwwReceiver?.let { runCatching { unregisterReceiver(it) } }
         debugScreenReceiver?.let { runCatching { unregisterReceiver(it) } }
+        debugCallReturnReceiver?.let { runCatching { unregisterReceiver(it) } }
+        debugTapReceiver?.let { runCatching { unregisterReceiver(it) } }
         sensorBridge?.stop()
         soundMonitor?.stop()
         wakeDetector?.stop()
@@ -1375,6 +1495,36 @@ class BridgeService : Service() {
         }
         runCatching {
             registerReceiver(debugCallReceiver, IntentFilter("com.aeonos.portalha.DEBUG_PLACE_CALL"))
+        }
+
+        // Debug: exercise the Calls auto-return without waiting the full minutes. The seconds
+        // value overrides callReturnMinutes until the next restart; 0 restores the pref.
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_CALL_RETURN --ei secs 10
+        debugCallReturnReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                callReturnDebugSecs = intent.getIntExtra("secs", 0)
+                Log.i(TAG, "calls: DEBUG_CALL_RETURN override = ${callReturnDebugSecs}s (0 = use pref)")
+                timeoutHandler.post { runCatching { checkCallReturn() } }
+            }
+        }
+        runCatching {
+            registerReceiver(debugCallReturnReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CALL_RETURN"))
+        }
+
+        // Debug: inject a tap at a screen fraction to verify gesture dispatch / find the spot
+        // that dismisses the launcher photo home.
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_TAP --ef fx 0.5 --ef fy 0.06
+        debugTapReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val fx = intent.getFloatExtra("fx", 0.5f)
+                val fy = intent.getFloatExtra("fy", 0.5f)
+                Log.i(TAG, "calls: DEBUG_TAP ($fx,$fy)")
+                ScreenAccessibility.instance?.tapFraction(fx, fy)
+                    ?: Log.w(TAG, "calls: DEBUG_TAP — no accessibility service")
+            }
+        }
+        runCatching {
+            registerReceiver(debugTapReceiver, IntentFilter("com.aeonos.portalha.DEBUG_TAP"))
         }
     }
 

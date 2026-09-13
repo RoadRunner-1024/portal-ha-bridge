@@ -4,6 +4,24 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.20.4 — The Calls button skips the screensaver and comes back on its own
+
+**Added**
+- **Tapping Calls goes straight to the calling screen.** Opening the Portal's own Calls
+  app lands on its idle photo/clock screen, which you normally have to tap to get past.
+  The Portal now clears that for you, so you arrive on your favourites and Contacts ready
+  to call. Works whether the launcher was already warm or cold from a reboot.
+- **It brings the dashboard back after a call.** Once you're done — or if you open Calls
+  and wander off — the Home Assistant dashboard returns on its own after a minute, as
+  long as no call is in progress. Leaving the Portal for anything else (a browser, a
+  video) is left alone; only the calling screen is followed. The minute is adjustable.
+
+**Note**
+- This uses the Portal's accessibility permission (already granted for screen sleep). After
+  updating to this version a Portal needs **one reboot** for the new behaviour to switch on —
+  it does not take effect until the accessibility service reloads. After that first reboot it
+  is automatic.
+
 ## v1.20.3 — An Alexa announcement no longer takes the Portal away from you
 
 **Fixed**
