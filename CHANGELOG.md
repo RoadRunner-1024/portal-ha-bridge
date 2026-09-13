@@ -22,6 +22,12 @@ the latest GitHub release.
   it does not take effect until the accessibility service reloads. After that first reboot it
   is automatic.
 
+**For setup**
+- The provisioner now enables the stock Portal launcher (the only app Meta trusts to open
+  Contacts/calling) and pins Immortal as the default Home, so the Calls button works on a
+  freshly provisioned Portal. Both are default now — the old `-SetLauncher` / `--set-launcher`
+  flag is no longer needed (still accepted, does nothing).
+
 ## v1.20.3 — An Alexa announcement no longer takes the Portal away from you
 
 **Fixed**

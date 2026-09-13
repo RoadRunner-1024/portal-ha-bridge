@@ -4,8 +4,8 @@
 #
 # Installs the app if it isn't already on the device, grants every permission/
 # app-op it needs (all require ADB - they can't be granted from the Portal UI),
-# enables the screen-control AccessibilityService, and optionally sets the
-# immortal launcher as the default home.
+# enables the screen-control AccessibilityService, enables the stock launcher and
+# pins immortal as the default home (needed for the Calls button).
 #
 # Needs nothing pre-installed. This single file is enough:
 #     1. download provision.sh
@@ -19,7 +19,6 @@
 #     ./provision.sh --install             # force a reinstall / update to the latest APK
 #     ./provision.sh --apk /path/app.apk   # install a specific APK
 #     ./provision.sh --serial 821..        # target a specific device (when several are connected)
-#     ./provision.sh --set-launcher        # also set immortal as the default home launcher
 #     ./provision.sh --free-mic            # free the mic for 2-way intercom (disables Meta's "Hey Alexa")
 #     ./provision.sh --restore-mic         # undo --free-mic (re-enable "Hey Alexa")
 #     ./provision.sh --alexa               # also revive Amazon Alexa (falcon) + link via amazon.com/code (A9 & A10)
@@ -44,13 +43,13 @@ SERIAL=""; APK=""; FORCE_INSTALL=0; SET_LAUNCHER=0; FREE_MIC=0; RESTORE_MIC=0; A
 while [ $# -gt 0 ]; do
   case "$1" in
     --install)      FORCE_INSTALL=1 ;;
-    --set-launcher) SET_LAUNCHER=1 ;;
+    --set-launcher) SET_LAUNCHER=1 ;;   # deprecated: enabling the stock launcher + pinning immortal HOME is now default
     --free-mic)     FREE_MIC=1 ;;
     --restore-mic)  RESTORE_MIC=1 ;;
     --alexa)        ALEXA=1 ;;
     --serial)       SERIAL="$2"; shift ;;
     --apk)          APK="$2"; shift ;;
-    -h|--help)      sed -n '3,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)      sed -n '3,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)              printf "%sUnknown argument: %s%s\n" "$C_RED" "$1" "$C_OFF"; exit 1 ;;
   esac
   shift
@@ -194,13 +193,26 @@ elif [ "$RESTORE_MIC" -eq 1 ]; then
   printf "%s  restored %s (Hey Alexa) - intercom returns to receive-only%s\n" "$C_GREEN" "$MILLENNIUM" "$C_OFF"
 fi
 
-if [ "$SET_LAUNCHER" -eq 1 ]; then
-  if adb_cmd shell pm list packages com.immortal.launcher 2>/dev/null | grep -q com.immortal.launcher; then
-    adb_cmd shell cmd package set-home-activity com.immortal.launcher/com.immortal.launcher.HomeActivity >/dev/null 2>&1
-    printf "%s  set default home -> immortal launcher%s\n" "$C_GREEN" "$C_OFF"
-  else
-    printf "%s  immortal launcher not installed - skipping launcher step%s\n" "$C_YEL" "$C_OFF"
-  fi
+# Calls support (v1.20.4+). The HA "Calls" button routes through the STOCK launcher -- the
+# only caller Meta trusts to open Contacts/calling (its signature-gated trusted-caller check
+# rejects everyone else, us and Immortal alike). The app then auto-dismisses the launcher's
+# idle photo/clock face so you land on the calling tiles. Two things this needs, both
+# idempotent and safe on a fresh Portal:
+#   1. the stock launcher ENABLED (it is by default; only matters where it was disabled, e.g.
+#      the office omni, which had it off to stop its HOME kicks -- superseded now that Immortal
+#      is the default HOME and v1.17.2+ recovers a stolen foreground);
+#   2. Immortal pinned as the default HOME, so with two home apps enabled the Home key goes
+#      straight to Immortal instead of popping a "Complete action using" chooser.
+STOCK_LAUNCHER="com.facebook.alohaapps.launcher"
+if adb_cmd shell pm list packages "$STOCK_LAUNCHER" 2>/dev/null | grep -q "$STOCK_LAUNCHER"; then
+  adb_cmd shell pm enable "$STOCK_LAUNCHER" >/dev/null 2>&1
+  printf "%s  enabled %s (trusted caller for the Calls button)%s\n" "$C_GREEN" "$STOCK_LAUNCHER" "$C_OFF"
+fi
+if adb_cmd shell pm list packages com.immortal.launcher 2>/dev/null | grep -q com.immortal.launcher; then
+  adb_cmd shell cmd package set-home-activity com.immortal.launcher/com.immortal.launcher.HomeActivity >/dev/null 2>&1
+  printf "%s  set default home -> immortal launcher%s\n" "$C_GREEN" "$C_OFF"
+else
+  printf "%s  immortal launcher not installed - skipping default-home step%s\n" "$C_YEL" "$C_OFF"
 fi
 
 # Restart so the app re-runs setup (notably auto-enabling the AccessibilityService

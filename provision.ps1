@@ -3,8 +3,8 @@
 
   Installs the app if it isn't already on the device, grants every
   permission/app-op it needs (all require ADB - they can't be granted from the
-  Portal UI), enables the screen-control AccessibilityService, and optionally
-  sets the immortal launcher as the default home.
+  Portal UI), enables the screen-control AccessibilityService, enables the stock
+  launcher and pins immortal as the default home (needed for the Calls button).
 
   Needs nothing pre-installed. This single file is enough:
       1. download provision.ps1
@@ -18,7 +18,6 @@
       .\provision.ps1 -Install        # force a reinstall / update to the latest APK
       .\provision.ps1 -Apk C:\path\portal-ha-bridge.apk   # install a specific APK
       .\provision.ps1 -Serial 821..   # target a specific device (use when several are connected)
-      .\provision.ps1 -SetLauncher    # also set immortal as the default home launcher
       .\provision.ps1 -FreeAlohaMic   # free the mic for 2-way intercom (disables Meta's "Hey Alexa")
       .\provision.ps1 -RestoreAlohaMic # undo -FreeAlohaMic (re-enable "Hey Alexa")
       .\provision.ps1 -Alexa          # also revive Amazon Alexa (falcon) + link via amazon.com/code (A9 & A10)
@@ -32,7 +31,7 @@ param(
     [string]$Serial,
     [string]$Apk,
     [switch]$Install,
-    [switch]$SetLauncher,
+    [switch]$SetLauncher,   # deprecated: enabling the stock launcher + pinning immortal HOME is now default
     [switch]$FreeAlohaMic,
     [switch]$RestoreAlohaMic,
     [switch]$Alexa
@@ -246,14 +245,27 @@ if ($FreeAlohaMic) {
     Write-Host "  restored $millennium (Hey Alexa) - intercom returns to receive-only" -ForegroundColor Green
 }
 
-if ($SetLauncher) {
-    $immortal = "com.immortal.launcher/com.immortal.launcher.HomeActivity"
-    if ((Adb shell "pm list packages com.immortal.launcher") -match "com.immortal.launcher") {
-        Adb shell "cmd package set-home-activity $immortal"
-        Write-Host "  set default home -> immortal launcher" -ForegroundColor Green
-    } else {
-        Write-Host "  immortal launcher not installed - skipping launcher step" -ForegroundColor Yellow
-    }
+# Calls support (v1.20.4+). The HA "Calls" button routes through the STOCK launcher -- the
+# only caller Meta trusts to open Contacts/calling (its signature-gated trusted-caller check
+# rejects everyone else, us and Immortal alike). The app then auto-dismisses the launcher's
+# idle photo/clock face so you land on the calling tiles. Two things this needs, both
+# idempotent and safe on a fresh Portal:
+#   1. the stock launcher ENABLED (it is by default; this only matters where it was disabled,
+#      e.g. the office omni, which had it off to stop its HOME kicks -- superseded now that
+#      Immortal is the default HOME and v1.17.2+ recovers a stolen foreground);
+#   2. Immortal pinned as the default HOME, so with two home apps enabled the Home key goes
+#      straight to Immortal instead of popping a "Complete action using" chooser.
+$stockLauncher = "com.facebook.alohaapps.launcher"
+if ((Adb shell "pm list packages $stockLauncher") -match [regex]::Escape($stockLauncher)) {
+    Adb shell "pm enable $stockLauncher" | Out-Null
+    Write-Host "  enabled $stockLauncher (trusted caller for the Calls button)" -ForegroundColor Green
+}
+$immortal = "com.immortal.launcher/com.immortal.launcher.HomeActivity"
+if ((Adb shell "pm list packages com.immortal.launcher") -match "com.immortal.launcher") {
+    Adb shell "cmd package set-home-activity $immortal" | Out-Null
+    Write-Host "  set default home -> immortal launcher" -ForegroundColor Green
+} else {
+    Write-Host "  immortal launcher not installed - skipping default-home step" -ForegroundColor Yellow
 }
 
 # Restart so the app re-runs setup (notably: auto-enabling the AccessibilityService
