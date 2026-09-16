@@ -398,6 +398,7 @@ class BridgeService : Service() {
     private var sensorBridge: SensorBridge? = null
     private var soundMonitor: SoundMonitor? = null
     private var dialServer: DialServer? = null
+    private var dlnaRenderer: DlnaRenderer? = null
     private var twoWay: TwoWayEngine? = null
     private var twoWayOrb: AnnounceOrbOverlay? = null
     @Volatile private var twoWayChannelOpen = false
@@ -962,6 +963,13 @@ class BridgeService : Service() {
             onStopApp = { TvAppActivity.close() }
         ).also { it.start() }
 
+        // DLNA MediaRenderer: makes the Portal a speaker in Music Assistant (and any DLNA
+        // controller). Modelled on DialServer; playback yields to calls/Alexa via audio focus.
+        if (p.dlnaEnabled) {
+            dlnaRenderer = DlnaRenderer(this, friendlyName = { prefs?.deviceName ?: "Portal" })
+                .also { it.start() }
+        }
+
         startCallWatch()
 
         screenOn = getSystemService(PowerManager::class.java).isInteractive
@@ -1122,6 +1130,7 @@ class BridgeService : Service() {
         falconReadiness?.stop(); falconReadiness = null
         twoWay?.stop(); twoWayOrb?.hide()
         dialServer?.stop(); dialServer = null
+        dlnaRenderer?.stop(); dlnaRenderer = null
         wakeHandler.removeCallbacks(reclaimTimeout); wakeHandler.removeCallbacks(reclaimDebounce)
         wakeHandler.removeCallbacks(stolenReturn); foregroundStolenMs = 0L
         runCatching { application.unregisterActivityLifecycleCallbacks(ourActivityWatch) }
@@ -2629,6 +2638,9 @@ class BridgeService : Service() {
         alexaColdRetries = 0
         wakeYieldStartMs = System.currentTimeMillis()
         soundMonitor?.stop()        // free the mic; the wake detector idles on an empty queue
+        // Pause any DLNA music so the assistant is heard. Audio focus usually does this on its
+        // own once the assistant grabs it, but not every wake path takes focus — so be explicit.
+        dlnaRenderer?.pauseForSystem()
         Log.i(TAG, "wake: yielded mic to assistant")
 
         val am = getSystemService(AudioManager::class.java)
@@ -2970,6 +2982,8 @@ class BridgeService : Service() {
         micYieldedForWake = false
         wakeHandler.removeCallbacks(reclaimTimeout)
         wakeHandler.removeCallbacks(reclaimDebounce)
+        // The assistant turn is over — resume DLNA music if we paused it for the turn.
+        dlnaRenderer?.resumeAfterSystem()
         wakeRecordingCallback?.let { cb ->
             runCatching { getSystemService(AudioManager::class.java)?.unregisterAudioRecordingCallback(cb) }
             wakeRecordingCallback = null

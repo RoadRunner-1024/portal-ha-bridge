@@ -47,6 +47,12 @@ class Prefs(private val context: Context) {
         get() = sp.getString("device_name", "Portal") ?: "Portal"
         set(v) = sp.edit().putString("device_name", v).apply()
 
+    // Advertise the Portal as a DLNA/UPnP MediaRenderer so it shows up as a speaker in Music
+    // Assistant (and any DLNA controller). On by default — that's the point of the feature.
+    var dlnaEnabled: Boolean
+        get() = sp.getBoolean("dlna_enabled", true)
+        set(v) = sp.edit().putBoolean("dlna_enabled", v).apply()
+
     val deviceId: String
         get() {
             val existing = sp.getString("device_id", null)

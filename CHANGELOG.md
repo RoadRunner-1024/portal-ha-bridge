@@ -4,6 +4,25 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.20.5 — The Portal is now a speaker (Music Assistant / DLNA)
+
+**Added**
+- **Play music to the Portal from Music Assistant.** Each Portal now advertises itself as a
+  DLNA/UPnP renderer, so Music Assistant discovers it automatically (under its DLNA provider /
+  Universal Player) and it shows up as a speaker you can play to — no Home Assistant config,
+  no add-ons. Any other DLNA controller on the network can use it too. Play, pause, stop,
+  seek, volume and mute all work, and the now-playing position/state is reported back.
+- **It gets out of the way for the important things.** Music automatically pauses for a call
+  or an Alexa turn and resumes afterwards (it yields the speaker via audio focus), and drops
+  out for the wake word so the Portal can still hear you.
+- On by default. (A per-Portal on/off toggle and now-playing details in Home Assistant are
+  coming in a follow-up.)
+
+**Note**
+- This is standalone playback — the Portal plays on its own. Tight multi-room sync with other
+  speakers (grouped playback in perfect step) isn't part of this; that would need a different
+  protocol.
+
 ## v1.20.4 — The Calls button skips the screensaver and comes back on its own
 
 **Added**
