@@ -428,6 +428,7 @@ class BridgeService : Service() {
     @Volatile private var ssPosBaseMs = 0
     @Volatile private var ssPosBaseAt = 0L
     @Volatile private var ssDurationMs = 0
+    @Volatile private var ssProgressSeq = -1
     @Volatile private var dlnaTrackKey = ""     // "title|artist" of the track the overlay shows
     private var twoWay: TwoWayEngine? = null
     private var twoWayOrb: AnnounceOrbOverlay? = null
@@ -1312,15 +1313,20 @@ class BridgeService : Service() {
         nowPlayingOverlay?.let { return it }
         return NowPlayingOverlay(
             this,
-            onPrev = { MaControl.previous(this) },
-            onNext = { MaControl.next(this) },
-            // Route play/pause through MA too when it's driving, so its queue state stays in sync
-            // (pausing only the local renderer would leave MA thinking it's still playing).
+            // Sendspin carries transport on its own controller channel, aimed at this player;
+            // the DLNA path has to go through HA because a DLNA renderer doesn't own the queue.
+            onPrev = { if (sendspinDriving) sendspinPlayer?.previous() else MaControl.previous(this) },
+            onNext = { if (sendspinDriving) sendspinPlayer?.next() else MaControl.next(this) },
             onPlayPause = {
-                if (sendspinDriving || maDriving) MaControl.playPause(this)
-                else dlnaRenderer?.playPauseToggle()
+                when {
+                    sendspinDriving -> sendspinPlayer?.playPause(ssPlaying)
+                    maDriving -> MaControl.playPause(this)
+                    else -> dlnaRenderer?.playPauseToggle()
+                }
             },
-            onStop = { if (sendspinDriving) MaControl.playPause(this) else dlnaRenderer?.stopFromUi() },
+            onStop = {
+                if (sendspinDriving) sendspinPlayer?.playPause(ssPlaying) else dlnaRenderer?.stopFromUi()
+            },
             onSetVolume = { pct ->
                 if (sendspinDriving) sendspinPlayer?.setVolume(pct) else dlnaRenderer?.setVolumeFromUi(pct)
             },
@@ -1394,8 +1400,13 @@ class BridgeService : Service() {
         sendspinDriving = true
         ssPlaying = t.playing
         ssDurationMs = t.durationMs
-        ssPosBaseMs = t.positionMs
-        ssPosBaseAt = SystemClock.elapsedRealtime()
+        // Most state messages carry no progress; re-anchoring on those would keep dragging the
+        // clock back to a stale snapshot and leave the lyrics trailing the music.
+        if (t.progressSeq != ssProgressSeq) {
+            ssProgressSeq = t.progressSeq
+            ssPosBaseMs = t.positionMs
+            ssPosBaseAt = SystemClock.elapsedRealtime()
+        }
 
         val key = "${t.title}|${t.artist}"
         if (key != ssTrackKey) {
@@ -1407,6 +1418,10 @@ class BridgeService : Service() {
             nowPlayingOverlay?.setLyrics(null)
             thread(isDaemon = true, name = "sendspin-lyrics") {
                 val res = Lyrics.fetch(t.artist, t.title, t.album, t.durationMs / 1000)
+                val lines = res?.synced
+                Log.i(TAG, "sendspin: lyrics for '${t.title}' — " +
+                    if (lines.isNullOrEmpty()) "none synced (plain=${res?.plain != null})"
+                    else "${lines.size} lines, last at ${lines.last().atMs}ms of ${t.durationMs}ms")
                 if (ssTrackKey == key) nowPlayingOverlay?.setLyrics(res)
             }
         } else {

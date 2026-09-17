@@ -550,7 +550,10 @@ class NowPlayingOverlay(
             val sb = SpannableStringBuilder()
             for (i in lines.indices) {
                 val start = sb.length
-                sb.append(lines[i].text.ifBlank { "♪" }).append("\n\n")
+                // Timed lyrics routinely carry blank lines for instrumental stretches, and many
+                // tracks simply stop having words long before they end. A row of notes (as the MA
+                // player shows) reads as "instrumental" rather than "the lyrics broke".
+                sb.append(lines[i].text.ifBlank { "♪ ♪ ♪ ♪ ♪ ♪" }).append("\n\n")
                 if (i == current) {
                     val cur = if (!lyricsMode || bgIsDark()) Color.WHITE else 0xFF0A0A0C.toInt()
                     sb.setSpan(ForegroundColorSpan(cur), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)

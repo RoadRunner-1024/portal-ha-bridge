@@ -61,11 +61,19 @@ class SendspinPlayer(
     @Volatile private var curAlbum = ""
     @Volatile private var curPosMs = 0
     @Volatile private var curDurMs = 0
+    @Volatile private var curCommands: List<String> = emptyList()
+    @Volatile private var progressSeq = 0
 
     /** What Sendspin says is playing. Pushed to us — no polling, no separate artwork fetch. */
     data class Track(
         val title: String, val artist: String, val album: String,
         val playing: Boolean, val positionMs: Int, val durationMs: Int,
+        /**
+         * Bumped only when the server actually sent a new progress snapshot. Most state messages
+         * carry none, and re-anchoring the position clock to a stale [positionMs] on those drags
+         * playback backwards — which is what put the lyrics behind the music.
+         */
+        val progressSeq: Int,
     )
 
     /** Fired whenever the track details change. Null means nothing is playing. */
@@ -77,6 +85,23 @@ class SendspinPlayer(
     /** Ask the server to change this player's volume (0–100). */
     fun setVolume(pct: Int) {
         runCatching { client?.sendControllerCommand("volume", volume = pct.coerceIn(0, 100)) }
+    }
+
+    // Transport goes over the same controller channel as volume — Music Assistant owns the queue
+    // either way, but routing it here keeps it aimed at THIS player rather than having to resolve
+    // the right media_player entity through Home Assistant.
+    fun next() = sendCommand("next", "next_track", "skip_next")
+    fun previous() = sendCommand("previous", "previous_track", "skip_previous")
+    fun playPause(currentlyPlaying: Boolean) =
+        if (currentlyPlaying) sendCommand("pause", "play_pause") else sendCommand("play", "play_pause")
+
+    /** Send the first candidate the server says it supports (falling back to the first). */
+    private fun sendCommand(vararg candidates: String) {
+        val supported = curCommands
+        val cmd = candidates.firstOrNull { supported.isEmpty() || it in supported } ?: candidates.first()
+        Log.i(TAG, "sendspin: controller command '$cmd' (server supports $supported)")
+        runCatching { client?.sendControllerCommand(cmd) }
+            .onFailure { Log.w(TAG, "sendspin: command '$cmd' failed: ${it.message}") }
     }
 
     val isConnected: Boolean get() = client != null
@@ -148,12 +173,20 @@ class SendspinPlayer(
         // Track details ride the same connection as the audio, so there's nothing to poll.
         s.launch {
             c.serverState.collect { st ->
+                st.controller?.supportedCommands?.let {
+                    if (it != curCommands) { curCommands = it; Log.i(TAG, "sendspin: controller supports $it") }
+                }
                 val md = st.metadata ?: return@collect
                 curTitle = md.title.merge(curTitle)
                 curArtist = md.artist.merge(curArtist)
                 curAlbum = md.album.merge(curAlbum)
-                // progress is a plain nullable: null here also means "unchanged".
-                md.progress?.let { curPosMs = it.trackProgress.toInt(); curDurMs = it.trackDuration.toInt() }
+                // progress is a plain nullable: null here also means "unchanged". Only a genuinely
+                // new snapshot may re-anchor the position clock.
+                md.progress?.let {
+                    curPosMs = it.trackProgress.toInt()
+                    curDurMs = it.trackDuration.toInt()
+                    progressSeq++
+                }
                 if (curTitle.isBlank() && curArtist.isBlank()) { onTrack?.invoke(null); return@collect }
                 onTrack?.invoke(Track(
                     title = curTitle,
@@ -162,6 +195,7 @@ class SendspinPlayer(
                     playing = c.groupPlaybackState.value != GroupPlaybackState.PAUSED,
                     positionMs = curPosMs,
                     durationMs = curDurMs,
+                    progressSeq = progressSeq,
                 ))
             }
         }
