@@ -57,12 +57,14 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        // Sendspin's JVM client library is built for JDK 17 bytecode.
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
 }
 
@@ -73,6 +75,16 @@ dependencies {
 
     // Extracts a dominant/vibrant colour from album art for the lyrics-view gradient.
     implementation("androidx.palette:palette-ktx:1.0.0")
+
+    // Sendspin (Open Home Foundation) — synchronised multi-room audio from Music Assistant.
+    // Pure Kotlin/JVM client: OkHttp + Java-WebSocket transport, Noise encryption and the
+    // Kalman clock sync. mDNS is left to us to supply via Android's NsdManager.
+    implementation("com.github.Sendspin:sendspin-jvm:v0.3.4")
+    // The client takes an OkHttpClient and a Moshi instance, but scopes both as `implementation`,
+    // so they aren't on our compile classpath transitively — declare them here too.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.moshi:moshi:1.15.1")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 
     // RTSP server (headless RtspServerStream). Kotlin-2.0-era versions so they
     // build cleanly under our Kotlin 2.0.20 — no metadata hacks.
