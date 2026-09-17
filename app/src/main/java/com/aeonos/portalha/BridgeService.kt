@@ -188,6 +188,7 @@ class BridgeService : Service() {
         private const val ACTION_ENSURE_CAMERA = "com.aeonos.portalha.ENSURE_CAMERA"
         private const val ACTION_BOOTED = "com.aeonos.portalha.BOOTED"
         private const val ACTION_APPLY_DISPLAY = "com.aeonos.portalha.APPLY_DISPLAY"
+        private const val ACTION_APPLY_MEDIA = "com.aeonos.portalha.APPLY_MEDIA"
 
         // When to put the dashboard up after a boot, and it has to be several tries over a good
         // minute. Measured on a real reboot: the system starts HOME at +0s, we win the front at
@@ -351,6 +352,12 @@ class BridgeService : Service() {
             context.startForegroundService(Intent(context, BridgeService::class.java)
                 .setAction(ACTION_APPLY_DISPLAY))
 
+        // Start/stop the speaker roles (DLNA, Sendspin) to match the prefs, without a service
+        // restart. Called from the system settings page's MUSIC switches.
+        fun applyMediaSettings(context: Context) =
+            context.startForegroundService(Intent(context, BridgeService::class.java)
+                .setAction(ACTION_APPLY_MEDIA))
+
         // Latest 0–100 ambient sound level (or -1) — for calibrating the enhanced-
         // presence threshold live in settings.
         fun currentSoundLevel(): Int = instance?.lastSoundLevel ?: -1
@@ -402,6 +409,7 @@ class BridgeService : Service() {
     private var dialServer: DialServer? = null
     private var dlnaRenderer: DlnaRenderer? = null
     private var nowPlayingOverlay: NowPlayingOverlay? = null
+    private var sendspinPlayer: SendspinPlayer? = null
     // Music-Assistant-truth poller (see MaControl.poll): owns the overlay whenever HA can tell us
     // what's really playing, because the DLNA renderer goes blind under MA's flow mode.
     @Volatile private var maPollRunning = false
@@ -982,6 +990,9 @@ class BridgeService : Service() {
         // controller). Modelled on DialServer; playback yields to calls/Alexa via audio focus.
         if (p.dlnaEnabled) startDlna()
 
+        // Sendspin: joins Music Assistant as a synchronised multi-room player. Experimental.
+        if (p.sendspinEnabled) startSendspin()
+
         startCallWatch()
 
         screenOn = getSystemService(PowerManager::class.java).isInteractive
@@ -1095,6 +1106,18 @@ class BridgeService : Service() {
             if (!on) intercom?.closeTwoWayChannel()
             Log.i(TAG, "2way: enabled=$on")
         }
+        if (intent?.action == ACTION_APPLY_MEDIA) {
+            val p = prefs ?: Prefs(this).also { prefs = it }
+            commandExecutor.submit {
+                runCatching {
+                    if (p.dlnaEnabled) startDlna() else stopDlna()
+                    if (p.sendspinEnabled) startSendspin() else stopSendspin()
+                    publishDlnaState(p)
+                }.onFailure { Log.w(TAG, "apply media settings failed: ${it.message}") }
+            }
+            return START_STICKY
+        }
+
         if (intent?.action == ACTION_APPLY_DISPLAY) {
             val p = prefs ?: Prefs(this).also { prefs = it }
             commandExecutor.submit {
@@ -1143,6 +1166,7 @@ class BridgeService : Service() {
         twoWay?.stop(); twoWayOrb?.hide()
         dialServer?.stop(); dialServer = null
         stopDlna()
+        stopSendspin()
         wakeHandler.removeCallbacks(reclaimTimeout); wakeHandler.removeCallbacks(reclaimDebounce)
         wakeHandler.removeCallbacks(stolenReturn); foregroundStolenMs = 0L
         runCatching { application.unregisterActivityLifecycleCallbacks(ourActivityWatch) }
@@ -1303,6 +1327,19 @@ class BridgeService : Service() {
             }
             start()
         }
+    }
+
+    // ── Sendspin (synchronised multi-room) ──────────────────────────────────────
+
+    private fun startSendspin() {
+        if (sendspinPlayer != null) return
+        Log.i(TAG, "sendspin: starting synced player as '${prefs?.deviceName}'")
+        sendspinPlayer = SendspinPlayer(this, deviceName = { prefs?.deviceName ?: "Portal" })
+            .also { it.start() }
+    }
+
+    private fun stopSendspin() {
+        sendspinPlayer?.stop(); sendspinPlayer = null
     }
 
     private fun stopDlna() {
@@ -1796,6 +1833,7 @@ class BridgeService : Service() {
             if (sensorBridge?.hasTemperature == true) HaDiscovery.tempOffsetCommandTopic(p.deviceId) else null,
             HaDiscovery.haTokenCommandTopic(p.deviceId),
             HaDiscovery.dlnaCommandTopic(p.deviceId),
+            HaDiscovery.sendspinCommandTopic(p.deviceId),
             HaDiscovery.npOverlayCommandTopic(p.deviceId)
         ).forEach { client.subscribe(it, 1) }
 
@@ -1909,6 +1947,7 @@ class BridgeService : Service() {
         pub(HaDiscovery.haTokenDiscoveryTopic(p.deviceId), HaDiscovery.haTokenConfigPayload(p.deviceId, p.deviceName))
         // Music-speaker (DLNA) on/off, and the now-playing overlay on/off.
         pub(HaDiscovery.dlnaDiscoveryTopic(p.deviceId), HaDiscovery.dlnaConfigPayload(p.deviceId, p.deviceName))
+        pub(HaDiscovery.sendspinDiscoveryTopic(p.deviceId), HaDiscovery.sendspinConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.npOverlayDiscoveryTopic(p.deviceId), HaDiscovery.npOverlayConfigPayload(p.deviceId, p.deviceName))
         publishDlnaState(p)
 
@@ -1999,6 +2038,7 @@ class BridgeService : Service() {
             HaDiscovery.tempOffsetCommandTopic(p.deviceId)        -> handleTempOffsetCommand(payload, p)
             HaDiscovery.haTokenCommandTopic(p.deviceId)           -> handleHaTokenCommand(payload, p)
             HaDiscovery.dlnaCommandTopic(p.deviceId)              -> handleDlnaCommand(payload, p)
+            HaDiscovery.sendspinCommandTopic(p.deviceId)          -> handleSendspinCommand(payload, p)
             HaDiscovery.npOverlayCommandTopic(p.deviceId)         -> handleNpOverlayCommand(payload, p)
         }
     }
@@ -2019,7 +2059,16 @@ class BridgeService : Service() {
         Log.i(TAG, "dlna: HA set now-playing overlay enabled=$on")
     }
 
+    private fun handleSendspinCommand(payload: String, p: Prefs) {
+        val on = payload.equals("ON", ignoreCase = true)
+        if (on != p.sendspinEnabled) p.sendspinEnabled = on
+        if (on) startSendspin() else stopSendspin()
+        publishDlnaState(p)
+        Log.i(TAG, "sendspin: HA set synced speaker enabled=$on")
+    }
+
     private fun publishDlnaState(p: Prefs) {
+        publishRaw(HaDiscovery.sendspinStateTopic(p.deviceId), if (p.sendspinEnabled) "ON" else "OFF", 1, retained = true)
         publishRaw(HaDiscovery.dlnaStateTopic(p.deviceId), if (p.dlnaEnabled) "ON" else "OFF", 1, retained = true)
         publishRaw(HaDiscovery.npOverlayStateTopic(p.deviceId), if (p.nowPlayingOverlayEnabled) "ON" else "OFF", 1, retained = true)
     }

@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/btn_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="←  Back"
+                android:backgroundTint="#37474F" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Music"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="@color/onSurface"
+                android:layout_marginStart="16dp" />
+        </LinearLayout>
+
+        <!-- ── Speaker ─────────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SPEAKER"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_dlna"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Music speaker (DLNA)"
+            android:textSize="16sp"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Appear as a speaker in Music Assistant and any other DLNA app on the network. Each Portal plays on its own."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="12dp" />
+
+        <Switch
+            android:id="@+id/sw_sendspin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Synced speaker (Sendspin)"
+            android:textSize="16sp"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Play in step with other speakers, so the same track can run through the house without echo. Needs Music Assistant 2.8 or newer. Experimental."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ── Now playing ─────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="NOW PLAYING"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/sw_np_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Now playing screen"
+            android:textSize="16sp"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="While music is playing, show the album art, track details and controls over the screensaver. Tap the album art for sing-along lyrics."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="24dp" />
+
+    </LinearLayout>
+</ScrollView>

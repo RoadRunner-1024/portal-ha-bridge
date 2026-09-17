@@ -53,6 +53,12 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("dlna_enabled", true)
         set(v) = sp.edit().putBoolean("dlna_enabled", v).apply()
 
+    // Join Music Assistant as a Sendspin player — synchronised multi-room audio, which DLNA
+    // can't do (it gives each Portal standalone playback). Experimental, so off by default.
+    var sendspinEnabled: Boolean
+        get() = sp.getBoolean("sendspin_enabled", false)
+        set(v) = sp.edit().putBoolean("sendspin_enabled", v).apply()
+
     // Show the on-screen now-playing overlay (art / title / controls / lyrics) while the Portal
     // is playing as a DLNA speaker. Independent of dlnaEnabled so playback can be silent-screen.
     var nowPlayingOverlayEnabled: Boolean

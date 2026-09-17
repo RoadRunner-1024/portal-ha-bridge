@@ -84,6 +84,9 @@ dependencies {
     // so they aren't on our compile classpath transitively — declare them here too.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.moshi:moshi:1.15.1")
+    // KotlinJsonAdapterFactory — the reflective fallback the Sendspin client's Moshi setup asks
+    // for alongside its JsonOptionalAdapterFactory.
+    implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 
     // RTSP server (headless RtspServerStream). Kotlin-2.0-era versions so they

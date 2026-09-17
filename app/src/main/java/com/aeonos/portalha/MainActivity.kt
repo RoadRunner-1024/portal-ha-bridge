@@ -58,6 +58,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_sensor_settings).setOnClickListener {
             startActivity(Intent(this, SensorSettingsActivity::class.java))
         }
+        findViewById<Button>(R.id.btn_music_settings).setOnClickListener {
+            startActivity(Intent(this, MusicSettingsActivity::class.java))
+        }
         findViewById<Button>(R.id.btn_system_settings).setOnClickListener {
             startActivity(Intent(this, SystemSettingsActivity::class.java))
         }

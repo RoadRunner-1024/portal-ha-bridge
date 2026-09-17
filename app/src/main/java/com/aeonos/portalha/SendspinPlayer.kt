@@ -7,9 +7,11 @@ import com.sendspin.protocol.AudioFormat
 import com.sendspin.protocol.ArtworkChannel
 import com.sendspin.protocol.ClientPreferences
 import com.sendspin.protocol.DiscoveryService
+import com.sendspin.protocol.JsonOptionalAdapterFactory
 import com.sendspin.protocol.OptionalRole
 import com.sendspin.protocol.SendSpinClient
 import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,7 +62,13 @@ class SendspinPlayer(
             .pingInterval(20, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)   // long-lived streaming socket
             .build()
-        val moshi = Moshi.Builder().build()
+        // The protocol's optional fields are a sealed JsonOptional (absent vs present-null), which
+        // needs its own factory — registered ahead of the reflective Kotlin adapter, per the
+        // library's documented setup. A bare Moshi.Builder() fails on the first server/state.
+        val moshi = Moshi.Builder()
+            .add(JsonOptionalAdapterFactory())
+            .addLast(KotlinJsonAdapterFactory())
+            .build()
 
         // PCM only: the Portal has no spare headroom for decoding, and on a LAN the bandwidth
         // is irrelevant. Artwork is requested at a size that suits the now-playing overlay.

@@ -158,6 +158,15 @@ object HaDiscovery {
         return """{"name":"Music Speaker","unique_id":"${deviceId}_dlna","device":${device(deviceId, name)},"state_topic":"${dlnaStateTopic(deviceId)}","command_topic":"${dlnaCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:cast-audio","entity_category":"config"}"""
     }
 
+    fun sendspinDiscoveryTopic(deviceId: String) = "homeassistant/switch/${deviceId}_sendspin/config"
+    fun sendspinStateTopic(deviceId: String) = "portal/$deviceId/sendspin/state"
+    fun sendspinCommandTopic(deviceId: String) = "portal/$deviceId/sendspin/set"
+
+    fun sendspinConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.ifBlank { "Portal" }
+        return """{"name":"Synced Speaker","unique_id":"${deviceId}_sendspin","device":${device(deviceId, name)},"state_topic":"${sendspinStateTopic(deviceId)}","command_topic":"${sendspinCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:speaker-multiple","entity_category":"config"}"""
+    }
+
     fun npOverlayDiscoveryTopic(deviceId: String) = "homeassistant/switch/${deviceId}_np_overlay/config"
     fun npOverlayStateTopic(deviceId: String) = "portal/$deviceId/npoverlay/state"
     fun npOverlayCommandTopic(deviceId: String) = "portal/$deviceId/npoverlay/set"
@@ -479,6 +488,7 @@ object HaDiscovery {
         screenTimeoutMinsCommandTopic(deviceId),
         tempOffsetCommandTopic(deviceId),
         dlnaCommandTopic(deviceId),
+        sendspinCommandTopic(deviceId),
         npOverlayCommandTopic(deviceId)
     )
 

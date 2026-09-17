@@ -107,6 +107,14 @@
             android:layout_marginBottom="8dp" />
 
         <Button
+            android:id="@+id/btn_music_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Music"
+            android:backgroundTint="@color/colorPrimary"
+            android:layout_marginBottom="8dp" />
+
+        <Button
             android:id="@+id/btn_system_settings"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
