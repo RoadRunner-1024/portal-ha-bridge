@@ -32,11 +32,17 @@ class SendspinAudioPlayer(
     @Volatile private var running = false
     @Volatile private var dropped = 0L
     @Volatile private var gain = 1f
+    @Volatile private var written = 0L
 
     override val isPlaying: Boolean get() = running
     override val droppedDecodeFrames: Long get() = dropped
 
     override fun configure(format: StreamFormat) {
+        // The server re-issues stream/start (and so configure) mid-session. Tear the old track
+        // down properly and resume playing if we were already running — otherwise the feeder
+        // would go on writing into a released track and the new one would never be started.
+        val wasRunning = running
+        stopFeeder()
         releaseTrack()
         this.format = format
         if (!format.codec.equals("pcm", ignoreCase = true)) {
@@ -75,15 +81,18 @@ class SendspinAudioPlayer(
             .build()
             .also { it.setVolume(gain) }
         Log.i(TAG, "sendspin: audio configured ${format.sampleRate}Hz " +
-            "${format.channels}ch ${format.bitDepth}bit buf=${minBuf * 2}B")
+            "${format.channels}ch ${format.bitDepth}bit buf=${minBuf * 2}B resume=$wasRunning")
+        if (wasRunning) start()
     }
 
     override fun start() {
         val t = track ?: run { Log.w(TAG, "sendspin: start with no track"); return }
         if (running) return
         running = true
+        written = 0
         runCatching { t.play() }.onFailure { Log.w(TAG, "sendspin: play failed: ${it.message}") }
         feeder = thread(isDaemon = true, name = "sendspin-audio") { feedLoop() }
+        Log.i(TAG, "sendspin: audio started")
     }
 
     override fun flush() {
@@ -92,17 +101,18 @@ class SendspinAudioPlayer(
     }
 
     override fun stop() {
+        stopFeeder()
+        releaseTrack()
+        Log.i(TAG, "sendspin: audio stopped (wrote ${written}B)")
+    }
+
+    override fun transition(format: StreamFormat) = configure(format)
+
+    /** Stops the feeder thread and waits for it, so it can't outlive the track it writes to. */
+    private fun stopFeeder() {
         running = false
         feeder?.let { runCatching { it.join(500) } }
         feeder = null
-        releaseTrack()
-    }
-
-    override fun transition(format: StreamFormat) {
-        val wasRunning = running
-        stop()
-        configure(format)
-        if (wasRunning) start()
     }
 
     override fun setVolume(gain: Float) {
@@ -111,10 +121,17 @@ class SendspinAudioPlayer(
     }
 
     private fun feedLoop() {
+        var lastReport = System.currentTimeMillis()
+        var idleLogged = false
         while (running) {
             val t = track ?: break
             val waitMicros = buffer.nextChunkDelayMicros()
             if (waitMicros == null) {                 // nothing queued yet
+                if (!idleLogged && written == 0L &&
+                    System.currentTimeMillis() - lastReport > 5_000) {
+                    Log.i(TAG, "sendspin: waiting for audio chunks (buffer empty)")
+                    idleLogged = true
+                }
                 Thread.sleep(5)
                 continue
             }
@@ -128,6 +145,15 @@ class SendspinAudioPlayer(
             if (n < 0) {
                 Log.w(TAG, "sendspin: AudioTrack.write error $n")
                 dropped++
+            } else {
+                written += n
+                idleLogged = false
+            }
+            val now = System.currentTimeMillis()
+            if (now - lastReport > 10_000) {
+                Log.i(TAG, "sendspin: audio ${written / 1024}KB written, " +
+                    "buffered=${buffer.size} dropped=$dropped")
+                lastReport = now
             }
         }
     }
