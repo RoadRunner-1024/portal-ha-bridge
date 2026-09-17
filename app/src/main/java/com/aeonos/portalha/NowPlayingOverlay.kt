@@ -80,7 +80,7 @@ class NowPlayingOverlay(
     private var stopIcon: MediaIcon? = null
     private var volIcon: MediaIcon? = null
     private var volBar: SeekBar? = null
-    private var lyricsClip: FrameLayout? = null
+    private var lyricsScroll: ScrollView? = null
     private var lyricsView: TextView? = null
     private var progress: ProgressBar? = null
     private var progressRow: View? = null
@@ -231,9 +231,10 @@ class NowPlayingOverlay(
         leftCol!!.addView(artistView)
         content!!.addView(leftCol)
 
-        // The lyric block is a plain TextView inside a clipping frame; we slide it with
-        // translationY so the active line sits exactly on the vertical midpoint. (A ScrollView
-        // clamps to its content bounds, so the first/last lines could never reach the centre.)
+        // A ScrollView, specifically: it measures its child with an UNSPECIFIED height, so the
+        // lyric block can be as tall as the whole song. A FrameLayout would measure a
+        // WRAP_CONTENT child AT_MOST the parent's height — one screenful — and everything past
+        // that simply wouldn't exist to scroll to.
         lyricsView = TextView(context).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 27f)
             setTypeface(typeface, Typeface.BOLD)
@@ -242,15 +243,14 @@ class NowPlayingOverlay(
             setPadding(dp(24), 0, dp(24), 0)
             text = ""
         }
-        lyricsClip = FrameLayout(context).apply {
+        lyricsScroll = ScrollView(context).apply {
             visibility = View.GONE
-            clipChildren = true
-            addView(lyricsView, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP))
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(lyricsView)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.35f)
         }
-        content!!.addView(lyricsClip)
+        content!!.addView(lyricsScroll)
 
         r.addView(content, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -387,7 +387,7 @@ class NowPlayingOverlay(
 
         // Layout: art bottom-left (now-playing) vs top-left (lyrics); show/hide lyrics.
         leftCol?.gravity = (if (dark) Gravity.BOTTOM else Gravity.TOP) or Gravity.CENTER_HORIZONTAL
-        lyricsClip?.visibility = if (dark) View.GONE else View.VISIBLE
+        lyricsScroll?.visibility = if (dark) View.GONE else View.VISIBLE
 
         // Palette. In lyrics mode the backdrop is the album's colour, so contrast follows it:
         // light text on a rich/dark sleeve, dark text on a pale one.
@@ -574,23 +574,26 @@ class NowPlayingOverlay(
     }
 
     /**
-     * Slide the whole lyric block so the active line sits on the vertical midpoint. Because we
-     * move the TextView itself (translationY, which may go negative) rather than scrolling a
-     * container, every line — first and last included — can reach dead centre.
+     * Scroll the lyric block so the active line sits on the vertical midpoint, and the rest of
+     * the song runs up past it. Half a viewport of padding top and bottom is what lets the very
+     * first and last lines reach the centre — without it the scroll range runs out and the
+     * highlight just drifts down the screen.
      */
     private fun centerCurrentLine(current: Int) {
         val lv = lyricsView ?: return
-        val clip = lyricsClip ?: return
-        clip.post {
-            if (clip.height == 0) return@post
+        val scroll = lyricsScroll ?: return
+        scroll.post {
+            if (scroll.height == 0) return@post
+            val pad = scroll.height / 2
+            if (lv.paddingTop != pad) lv.setPadding(dp(24), pad, dp(24), pad)
             val layout = lv.layout ?: return@post
             val lineNo = minOf(current.coerceAtLeast(0) * 2, layout.lineCount - 1)
-            val lineCenter =
-                (layout.getLineTop(lineNo) + layout.getLineBottom(lineNo)) / 2f + lv.paddingTop
-            val target = clip.height / 2f - lineCenter
-            if (kotlin.math.abs(target - lv.translationY) < 1f) return@post
+            val lineCenter = (layout.getLineTop(lineNo) + layout.getLineBottom(lineNo)) / 2 + pad
+            val maxScroll = (layout.height + pad * 2 - scroll.height).coerceAtLeast(0)
+            val target = (lineCenter - scroll.height / 2).coerceIn(0, maxScroll)
+            if (kotlin.math.abs(target - scroll.scrollY) < dp(2)) return@post
             scrollAnim?.cancel()
-            scrollAnim = ObjectAnimator.ofFloat(lv, "translationY", lv.translationY, target).apply {
+            scrollAnim = ObjectAnimator.ofInt(scroll, "scrollY", scroll.scrollY, target).apply {
                 duration = 520
                 interpolator = DecelerateInterpolator()
                 start()
