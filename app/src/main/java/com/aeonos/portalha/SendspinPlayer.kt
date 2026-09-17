@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -54,6 +55,7 @@ class SendspinPlayer(
     private var client: SendSpinClient? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var connectJob: Job? = null
+    private var idleJob: Job? = null
 
     // Running view of the track, since server/state only sends what changed.
     @Volatile private var curTitle = ""
@@ -92,8 +94,13 @@ class SendspinPlayer(
     // the right media_player entity through Home Assistant.
     fun next() = sendCommand("next", "next_track", "skip_next")
     fun previous() = sendCommand("previous", "previous_track", "skip_previous")
+    fun stopPlayback() = sendCommand("stop", "pause")
     fun playPause(currentlyPlaying: Boolean) =
         if (currentlyPlaying) sendCommand("pause", "play_pause") else sendCommand("play", "play_pause")
+
+    private fun emitTrack(playing: Boolean) = onTrack?.invoke(Track(
+        title = curTitle, artist = curArtist, album = curAlbum,
+        playing = playing, positionMs = curPosMs, durationMs = curDurMs, progressSeq = progressSeq))
 
     /** Send the first candidate the server says it supports (falling back to the first). */
     private fun sendCommand(vararg candidates: String) {
@@ -188,23 +195,25 @@ class SendspinPlayer(
                     progressSeq++
                 }
                 if (curTitle.isBlank() && curArtist.isBlank()) { onTrack?.invoke(null); return@collect }
-                onTrack?.invoke(Track(
-                    title = curTitle,
-                    artist = curArtist,
-                    album = curAlbum,
-                    playing = c.groupPlaybackState.value != GroupPlaybackState.PAUSED,
-                    positionMs = curPosMs,
-                    durationMs = curDurMs,
-                    progressSeq = progressSeq,
-                ))
+                emitTrack(playing = c.groupPlaybackState.value == GroupPlaybackState.PLAYING)
             }
         }
         s.launch {
             c.groupPlaybackState.collect { gs ->
                 Log.i(TAG, "sendspin: playback $gs")
+                idleJob?.cancel()
+                if (curTitle.isBlank() && curArtist.isBlank()) return@collect
+                // Re-emit the same track with the new playing state. Music Assistant reports
+                // STOPPED when it ends the stream on a pause, so treating that as "nothing is
+                // playing" tore the whole now-playing screen down the moment you hit pause.
+                emitTrack(playing = gs == GroupPlaybackState.PLAYING)
                 if (gs == GroupPlaybackState.STOPPED) {
-                    curTitle = ""; curArtist = ""; curAlbum = ""; curPosMs = 0; curDurMs = 0
-                    onTrack?.invoke(null)
+                    // Genuinely finished rather than paused? Only then clear the screen.
+                    idleJob = s.launch {
+                        delay(90_000)
+                        curTitle = ""; curArtist = ""; curAlbum = ""; curPosMs = 0; curDurMs = 0
+                        onTrack?.invoke(null)
+                    }
                 }
             }
         }
@@ -212,6 +221,7 @@ class SendspinPlayer(
 
     fun stop() {
         connectJob?.cancel(); connectJob = null
+        idleJob?.cancel(); idleJob = null
         runCatching { client?.disconnect("shutting_down") }
         client = null
         scope?.cancel(); scope = null

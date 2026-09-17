@@ -1324,9 +1324,7 @@ class BridgeService : Service() {
                     else -> dlnaRenderer?.playPauseToggle()
                 }
             },
-            onStop = {
-                if (sendspinDriving) sendspinPlayer?.playPause(ssPlaying) else dlnaRenderer?.stopFromUi()
-            },
+            onStop = { if (sendspinDriving) sendspinPlayer?.stopPlayback() else dlnaRenderer?.stopFromUi() },
             onSetVolume = { pct ->
                 if (sendspinDriving) sendspinPlayer?.setVolume(pct) else dlnaRenderer?.setVolumeFromUi(pct)
             },
