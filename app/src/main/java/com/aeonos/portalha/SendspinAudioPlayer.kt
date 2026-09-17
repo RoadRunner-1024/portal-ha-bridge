@@ -38,12 +38,23 @@ class SendspinAudioPlayer(
     override val droppedDecodeFrames: Long get() = dropped
 
     override fun configure(format: StreamFormat) {
+        // A track change re-issues stream/start with the SAME format. Rebuilding the AudioTrack
+        // for that is both wasteful and audible, so keep it and just drop whatever is still
+        // queued for the previous track — those chunks are already overdue against the new
+        // timeline and would otherwise be dumped out in a burst (garbled audio on track change).
+        if (format == this.format && track != null) {
+            buffer.flush()
+            runCatching { track?.pause(); track?.flush(); if (running) track?.play() }
+            Log.i(TAG, "sendspin: stream restarted, same format — buffer flushed")
+            return
+        }
         // The server re-issues stream/start (and so configure) mid-session. Tear the old track
         // down properly and resume playing if we were already running — otherwise the feeder
         // would go on writing into a released track and the new one would never be started.
         val wasRunning = running
         stopFeeder()
         releaseTrack()
+        buffer.flush()
         this.format = format
         if (!format.codec.equals("pcm", ignoreCase = true)) {
             Log.w(TAG, "sendspin: server chose codec '${format.codec}' but only PCM is supported")

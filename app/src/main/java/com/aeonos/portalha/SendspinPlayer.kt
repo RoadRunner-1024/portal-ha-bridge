@@ -7,6 +7,8 @@ import com.sendspin.protocol.AudioFormat
 import com.sendspin.protocol.ArtworkChannel
 import com.sendspin.protocol.ClientPreferences
 import com.sendspin.protocol.DiscoveryService
+import com.sendspin.protocol.GroupPlaybackState
+import com.sendspin.protocol.JsonOptional
 import com.sendspin.protocol.JsonOptionalAdapterFactory
 import com.sendspin.protocol.OptionalRole
 import com.sendspin.protocol.SendSpinClient
@@ -21,6 +23,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+
+/** Absent and present-but-null both mean "nothing to show". Defined here rather than imported
+ *  because the library's own helper isn't present in every release. */
+private fun <T> JsonOptional<T>.present(): T? = (this as? JsonOptional.Present)?.value
 
 /**
  * Sendspin player — the Portal as a synchronised multi-room speaker.
@@ -43,8 +49,24 @@ class SendspinPlayer(
     private var multicastLock: WifiManager.MulticastLock? = null
     private var connectJob: Job? = null
 
-    /** Called on the main thread with the current track, or null when nothing is playing. */
-    var onTrack: ((title: String, artist: String, album: String, artwork: ByteArray?) -> Unit)? = null
+    /** What Sendspin says is playing. Pushed to us — no polling, no separate artwork fetch. */
+    data class Track(
+        val title: String, val artist: String, val album: String,
+        val playing: Boolean, val positionMs: Int, val durationMs: Int,
+    )
+
+    /** Fired whenever the track details change. Null means nothing is playing. */
+    var onTrack: ((Track?) -> Unit)? = null
+
+    /** Fired when new album artwork arrives, as raw image bytes. */
+    var onArtwork: ((ByteArray?) -> Unit)? = null
+
+    /** Ask the server to change this player's volume (0–100). */
+    fun setVolume(pct: Int) {
+        runCatching { client?.sendControllerCommand("volume", volume = pct.coerceIn(0, 100)) }
+    }
+
+    val isConnected: Boolean get() = client != null
 
     fun start() {
         if (scope != null) return
@@ -107,7 +129,33 @@ class SendspinPlayer(
         s.launch { c.state.collect { Log.i(TAG, "sendspin: state $it") } }
         s.launch { c.albumArtwork.collect { art ->
             Log.i(TAG, "sendspin: artwork ${art?.size ?: 0} bytes")
+            if (art != null && art.isNotEmpty()) onArtwork?.invoke(art)
         } }
+
+        // Track details ride the same connection as the audio, so there's nothing to poll.
+        s.launch {
+            c.serverState.collect { st ->
+                val md = st.metadata ?: return@collect
+                val title = md.title.present().orEmpty()
+                val artist = md.artist.present().orEmpty()
+                if (title.isBlank() && artist.isBlank()) { onTrack?.invoke(null); return@collect }
+                val playing = c.groupPlaybackState.value != GroupPlaybackState.PAUSED
+                onTrack?.invoke(Track(
+                    title = title,
+                    artist = artist,
+                    album = md.album.present().orEmpty(),
+                    playing = playing,
+                    positionMs = (md.progress?.trackProgress ?: 0L).toInt(),
+                    durationMs = (md.progress?.trackDuration ?: 0L).toInt(),
+                ))
+            }
+        }
+        s.launch {
+            c.groupPlaybackState.collect { gs ->
+                Log.i(TAG, "sendspin: playback $gs")
+                if (gs == GroupPlaybackState.STOPPED) onTrack?.invoke(null)
+            }
+        }
     }
 
     fun stop() {

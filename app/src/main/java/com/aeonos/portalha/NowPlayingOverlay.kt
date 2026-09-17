@@ -95,6 +95,7 @@ class NowPlayingOverlay(
     private var seeking = false
     private var lyricsMode = false
     private var lyricsGradient: IntArray? = null   // art-derived light gradient for the lyrics view
+    private var artFromBytes = false               // artwork pushed to us, so there's no URL to reload
     private var scrollAnim: ObjectAnimator? = null
 
     private fun dp(v: Int) = (v * density).toInt()
@@ -127,6 +128,31 @@ class NowPlayingOverlay(
     }
 
     fun setVolume(pct: Int) = main.post { if (!seeking) volBar?.progress = pct }
+
+    /**
+     * Artwork delivered as bytes rather than a URL — Sendspin pushes the image down the same
+     * connection as the metadata, so there's nothing to fetch.
+     */
+    fun setArtwork(bytes: ByteArray?) {
+        if (bytes == null || bytes.isEmpty()) return
+        thread(isDaemon = true, name = "np-art-bytes") {
+            val bmp = runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                .onFailure { Log.w(TAG, "artwork decode failed", it) }.getOrNull() ?: return@thread
+            val grad = runCatching {
+                val p = Palette.from(bmp).generate()
+                buildLightGradient(p.getLightVibrantColor(
+                    p.getVibrantColor(p.getDominantColor(0xFFBFC0C8.toInt()))))
+            }.getOrNull()
+            main.post {
+                artFromBytes = true
+                art?.setImageBitmap(bmp)
+                if (grad != null) {
+                    lyricsGradient = grad
+                    if (lyricsMode) bgLayer?.background = lightBgDrawable()
+                }
+            }
+        }
+    }
 
     fun setLyrics(result: Lyrics.Result?) = main.post {
         synced = result?.synced
@@ -424,10 +450,11 @@ class NowPlayingOverlay(
 
     private fun loadArt(uri: String) {
         if (uri.isBlank()) {
-            Log.d(TAG, "no art uri for current track")
-            art?.setImageDrawable(null)
+            // Don't wipe artwork that was pushed to us as bytes (Sendspin) — there's no URL for it.
+            if (!artFromBytes) { Log.d(TAG, "no art uri for current track"); art?.setImageDrawable(null) }
             return
         }
+        artFromBytes = false
         thread(isDaemon = true, name = "np-art") {
             val bmp = runCatching {
                 val conn = (URL(uri).openConnection() as HttpURLConnection).apply {

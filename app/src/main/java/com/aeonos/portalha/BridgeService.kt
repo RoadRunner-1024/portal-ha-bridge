@@ -421,6 +421,13 @@ class BridgeService : Service() {
     @Volatile private var maPosStamp = ""
     @Volatile private var maDurationMs = 0
     @Volatile private var maIdlePolls = 0
+    // Sendspin now-playing: pushed to us, so no polling and no separate artwork fetch.
+    @Volatile private var sendspinDriving = false
+    @Volatile private var ssTrackKey = ""
+    @Volatile private var ssPlaying = false
+    @Volatile private var ssPosBaseMs = 0
+    @Volatile private var ssPosBaseAt = 0L
+    @Volatile private var ssDurationMs = 0
     @Volatile private var dlnaTrackKey = ""     // "title|artist" of the track the overlay shows
     private var twoWay: TwoWayEngine? = null
     private var twoWayOrb: AnnounceOrbOverlay? = null
@@ -1296,26 +1303,53 @@ class BridgeService : Service() {
     // the dashboard. Bring our dashboard back to the front on screen-on. Our
     // ── DLNA / Music Assistant speaker ──────────────────────────────────────────
 
-    private fun startDlna() {
-        if (dlnaRenderer != null) return
-        nowPlayingOverlay = NowPlayingOverlay(
+    /**
+     * One now-playing overlay, shared by both speaker roles. Whichever transport is actually
+     * playing supplies the details; the controls always go out to Music Assistant, which owns
+     * the queue either way.
+     */
+    private fun ensureNowPlayingOverlay(): NowPlayingOverlay {
+        nowPlayingOverlay?.let { return it }
+        return NowPlayingOverlay(
             this,
             onPrev = { MaControl.previous(this) },
             onNext = { MaControl.next(this) },
             // Route play/pause through MA too when it's driving, so its queue state stays in sync
             // (pausing only the local renderer would leave MA thinking it's still playing).
-            onPlayPause = { if (maDriving) MaControl.playPause(this) else dlnaRenderer?.playPauseToggle() },
-            onStop = { dlnaRenderer?.stopFromUi() },
-            onSetVolume = { pct -> dlnaRenderer?.setVolumeFromUi(pct) },
+            onPlayPause = {
+                if (sendspinDriving || maDriving) MaControl.playPause(this)
+                else dlnaRenderer?.playPauseToggle()
+            },
+            onStop = { if (sendspinDriving) MaControl.playPause(this) else dlnaRenderer?.stopFromUi() },
+            onSetVolume = { pct ->
+                if (sendspinDriving) sendspinPlayer?.setVolume(pct) else dlnaRenderer?.setVolumeFromUi(pct)
+            },
             onClose = { nowPlayingOverlay?.hide() },
             positionProvider = {
-                if (maDriving) {
-                    if (maPlaying) (maPosBaseMs + (SystemClock.elapsedRealtime() - maPosBaseAt)).toInt()
-                    else maPosBaseMs
-                } else dlnaRenderer?.trackPositionMs() ?: 0
+                when {
+                    // Sendspin hands us a per-track progress snapshot; count on from it locally.
+                    sendspinDriving ->
+                        if (ssPlaying) (ssPosBaseMs + (SystemClock.elapsedRealtime() - ssPosBaseAt)).toInt()
+                        else ssPosBaseMs
+                    maDriving ->
+                        if (maPlaying) (maPosBaseMs + (SystemClock.elapsedRealtime() - maPosBaseAt)).toInt()
+                        else maPosBaseMs
+                    else -> dlnaRenderer?.trackPositionMs() ?: 0
+                }
             },
-            durationProvider = { if (maDriving) maDurationMs else dlnaRenderer?.trackDurationMs() ?: 0 },
-        )
+            durationProvider = {
+                when {
+                    sendspinDriving -> ssDurationMs
+                    maDriving -> maDurationMs
+                    else -> dlnaRenderer?.trackDurationMs() ?: 0
+                }
+            },
+        ).also { nowPlayingOverlay = it }
+    }
+
+    private fun startDlna() {
+        if (dlnaRenderer != null) return
+        ensureNowPlayingOverlay()
         startMaPoll()
         dlnaRenderer = DlnaRenderer(this, friendlyName = { prefs?.deviceName ?: "Portal" }).apply {
             listener = object : DlnaRenderer.Listener {
@@ -1334,12 +1368,50 @@ class BridgeService : Service() {
     private fun startSendspin() {
         if (sendspinPlayer != null) return
         Log.i(TAG, "sendspin: starting synced player as '${prefs?.deviceName}'")
-        sendspinPlayer = SendspinPlayer(this, deviceName = { prefs?.deviceName ?: "Portal" })
-            .also { it.start() }
+        ensureNowPlayingOverlay()
+        sendspinPlayer = SendspinPlayer(this, deviceName = { prefs?.deviceName ?: "Portal" }).apply {
+            onTrack = { t -> onSendspinTrack(t) }
+            onArtwork = { bytes -> nowPlayingOverlay?.setArtwork(bytes) }
+            start()
+        }
     }
 
     private fun stopSendspin() {
         sendspinPlayer?.stop(); sendspinPlayer = null
+        sendspinDriving = false; ssTrackKey = ""
+        nowPlayingOverlay?.hide()
+    }
+
+    /** Sendspin pushed new track details — drive the overlay straight off them. */
+    private fun onSendspinTrack(t: SendspinPlayer.Track?) {
+        val overlayOn = prefs?.nowPlayingOverlayEnabled == true
+        if (t == null || !overlayOn || inCall) {
+            if (ssTrackKey.isNotEmpty()) { nowPlayingOverlay?.hide(); ssTrackKey = "" }
+            sendspinDriving = t != null
+            return
+        }
+        // Sendspin is authoritative while it's playing, so the DLNA/HA path stands down.
+        sendspinDriving = true
+        ssPlaying = t.playing
+        ssDurationMs = t.durationMs
+        ssPosBaseMs = t.positionMs
+        ssPosBaseAt = SystemClock.elapsedRealtime()
+
+        val key = "${t.title}|${t.artist}"
+        if (key != ssTrackKey) {
+            ssTrackKey = key
+            Log.i(TAG, "sendspin: now playing '${t.title}' by '${t.artist}' " +
+                "pos=${t.positionMs}ms dur=${t.durationMs}ms")
+            // artUri is blank: the artwork arrives as bytes on its own channel.
+            nowPlayingOverlay?.show(t.title, t.artist, t.album, "", t.playing, 50)
+            nowPlayingOverlay?.setLyrics(null)
+            thread(isDaemon = true, name = "sendspin-lyrics") {
+                val res = Lyrics.fetch(t.artist, t.title, t.album, t.durationMs / 1000)
+                if (ssTrackKey == key) nowPlayingOverlay?.setLyrics(res)
+            }
+        } else {
+            nowPlayingOverlay?.update(t.title, t.artist, t.album, "", t.playing)
+        }
     }
 
     private fun stopDlna() {
@@ -1367,6 +1439,8 @@ class BridgeService : Service() {
     }
 
     private fun pollMaOnce() {
+        // Sendspin pushes the real thing — don't let the poller fight it for the overlay.
+        if (sendspinDriving) return
         val s = MaControl.poll(this)
         if (s == null) {
             // HA not configured / entity not resolvable → leave the overlay to the DLNA path.
