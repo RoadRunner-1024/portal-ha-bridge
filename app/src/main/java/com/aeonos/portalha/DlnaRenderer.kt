@@ -90,9 +90,44 @@ class DlnaRenderer(
     @Volatile private var transportState = "NO_MEDIA_PRESENT"   // UPnP AVTransportState
     @Volatile private var currentUri = ""
     @Volatile private var currentMeta = ""     // the DIDL-Lite the controller sent
+    // Gapless queue: Music Assistant preloads the upcoming track via SetNextAVTransportURI and
+    // expects us to auto-advance to it when the current one ends. Without this, MA's queue never
+    // moves on by itself (it isn't notified to push the next track).
+    @Volatile private var nextUri = ""
+    @Volatile private var nextMeta = ""
     @Volatile private var durationMs = 0
+    // In MA "flow" mode the whole queue is one continuous stream, so the MediaPlayer position
+    // keeps climbing across tracks. Record the stream position at each track boundary so we can
+    // report a track-relative position (needed to sync LRCLIB lyrics, which are 0-based per track).
+    @Volatile private var trackBaseMs = 0
     @Volatile private var prepared = false
     @Volatile private var pausedBySystem = false   // paused for a call/Alexa/intercom
+
+    /** What's playing, parsed from the controller's DIDL-Lite — for the now-playing overlay. */
+    data class NowPlaying(
+        val title: String, val artist: String, val album: String,
+        val artUri: String, val durationSec: Int,
+    )
+    @Volatile var nowPlaying: NowPlaying? = null
+        private set
+
+    /** BridgeService listens so the overlay can react to play/pause/track/volume changes. */
+    interface Listener {
+        fun onRendererStateChanged(state: String, np: NowPlaying?)
+        fun onRendererVolumeChanged(volumePct: Int)
+    }
+    @Volatile var listener: Listener? = null
+
+    // Public read state + controls for the overlay (all thread-safe / posted to the play thread).
+    fun currentState(): String = transportState
+    fun volumePct(): Int = getVolume()
+    fun positionMs(): Int = positionRead()
+    fun trackPositionMs(): Int = (positionRead() - trackBaseMs).coerceAtLeast(0)
+    fun trackDurationMs(): Int = durationMs
+    fun playPauseToggle() = play.post { if (transportState == "PLAYING") doPause(false) else doPlay() }
+    fun stopFromUi() = play.post { doStop() }
+    fun setVolumeFromUi(pct: Int) = setVolume(pct)
+    fun nudgeVolume(delta: Int) = setVolume((getVolume() + delta).coerceIn(0, 100))
 
     fun start() {
         if (running) return
@@ -279,6 +314,15 @@ class DlnaRenderer(
                 play.post { setUri(uri, meta) }
                 soapResponse(SVC_AVT, action, "")
             }
+            "SetNextAVTransportURI" -> {
+                val nUri = soapArg(body, "NextURI")
+                val nMeta = soapArg(body, "NextURIMetaData")
+                play.post {
+                    nextUri = nUri; nextMeta = nMeta
+                    Log.i(TAG, "dlna: setNextUri title=${parseDidl(nMeta)?.title} blank=${nUri.isBlank()}")
+                }
+                soapResponse(SVC_AVT, action, "")
+            }
             "Play" -> { play.post { doPlay() }; soapResponse(SVC_AVT, action, "") }
             "Pause" -> { play.post { doPause(false) }; soapResponse(SVC_AVT, action, "") }
             "Stop" -> { play.post { doStop() }; soapResponse(SVC_AVT, action, "") }
@@ -292,7 +336,7 @@ class DlnaRenderer(
                 "<CurrentTransportStatus>OK</CurrentTransportStatus>" +
                 "<CurrentSpeed>1</CurrentSpeed>")
             "GetPositionInfo" -> {
-                val pos = positionMs()
+                val pos = positionRead()
                 soapResponse(SVC_AVT, action,
                     "<Track>1</Track>" +
                     "<TrackDuration>${hms(durationMs)}</TrackDuration>" +
@@ -308,7 +352,8 @@ class DlnaRenderer(
                 "<MediaDuration>${hms(durationMs)}</MediaDuration>" +
                 "<CurrentURI>${xmlEscape(currentUri)}</CurrentURI>" +
                 "<CurrentURIMetaData>${xmlEscape(currentMeta)}</CurrentURIMetaData>" +
-                "<NextURI></NextURI><NextURIMetaData></NextURIMetaData>" +
+                "<NextURI>${xmlEscape(nextUri)}</NextURI>" +
+                "<NextURIMetaData>${xmlEscape(nextMeta)}</NextURIMetaData>" +
                 "<PlayMedium>NETWORK</PlayMedium><RecordMedium>NOT_IMPLEMENTED</RecordMedium>" +
                 "<WriteStatus>NOT_IMPLEMENTED</WriteStatus>")
             "GetTransportSettings" -> soapResponse(SVC_AVT, action,
@@ -357,10 +402,29 @@ class DlnaRenderer(
     // ── Playback (all on the play thread) ───────────────────────────────────────
 
     private fun setUri(uri: String, meta: String) {
+        // MA "flow" mode streams the whole queue as one continuous URL and re-sends
+        // SetAVTransportURI with fresh metadata when the track changes — same URL. Update the
+        // now-playing info WITHOUT tearing down and restarting the stream (which would hiccup).
+        val sameStream = uri.isNotBlank() && uri == currentUri && player != null
+        val newNp = parseDidl(meta)
+        val trackChanged = newNp != null &&
+            (newNp.title != nowPlaying?.title || newNp.artist != nowPlaying?.artist)
         currentUri = uri
         currentMeta = meta
+        nowPlaying = newNp
+        Log.i(TAG, "dlna: setUri sameStream=$sameStream trackChanged=$trackChanged " +
+            "title=${newNp?.title} dur=${newNp?.durationSec}s uri=$uri")
+        if (sameStream) {
+            // Continuous stream, new track metadata → rebase the position so lyrics line up.
+            if (trackChanged) trackBaseMs = positionRead()
+            listener?.onRendererStateChanged(transportState, nowPlaying)
+            return
+        }
+        trackBaseMs = 0
         durationMs = 0
         prepared = false
+        // An explicit new track invalidates any previously preloaded "next" (MA will resend one).
+        if (!advancing) { nextUri = ""; nextMeta = "" }
         releasePlayer()
         if (uri.isBlank()) { setTransport("NO_MEDIA_PRESENT"); return }
         setTransport("TRANSITIONING")
@@ -377,8 +441,9 @@ class DlnaRenderer(
                 if (wantPlay) { wantPlay = false; startPlayback() } else setTransport("STOPPED")
             }
             setOnCompletionListener {
-                setTransport("STOPPED")
-                abandonFocus()
+                Log.i(TAG, "dlna: track completed, preloaded next=${nextUri.isNotBlank()}")
+                // Gapless: if MA preloaded a next track, roll straight into it; else stop.
+                if (!advanceToNext()) { setTransport("STOPPED"); abandonFocus() }
             }
             setOnErrorListener { _, what, extra ->
                 Log.w(TAG, "dlna: MediaPlayer error what=$what extra=$extra uri=$uri")
@@ -394,6 +459,21 @@ class DlnaRenderer(
             Log.w(TAG, "dlna: setDataSource failed: ${it.message}")
             setTransport("STOPPED")
         }
+    }
+
+    // True only while auto-advancing to a preloaded next track, so setUri keeps the queued URI.
+    @Volatile private var advancing = false
+
+    /** On track completion, roll into the MA-preloaded next track (gapless). Play thread only. */
+    private fun advanceToNext(): Boolean {
+        if (nextUri.isBlank()) return false
+        val u = nextUri; val m = nextMeta
+        nextUri = ""; nextMeta = ""
+        Log.i(TAG, "dlna: auto-advance -> ${parseDidl(m)?.title}")
+        wantPlay = true
+        advancing = true
+        try { setUri(u, m) } finally { advancing = false }
+        return true
     }
 
     @Volatile private var wantPlay = false
@@ -434,7 +514,7 @@ class DlnaRenderer(
         if (ms >= 0) runCatching { player?.seekTo(ms) }
     }
 
-    private fun positionMs(): Int =
+    private fun positionRead(): Int =
         runCatching { if (player != null && prepared) player!!.currentPosition else 0 }.getOrDefault(0)
 
     private fun releasePlayer() {
@@ -510,6 +590,7 @@ class DlnaRenderer(
         val v = Math.round(pct.coerceIn(0, 100) / 100.0 * maxVol()).toInt()
         runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0) }
         notifyEvent(SVC_RC)
+        listener?.onRendererVolumeChanged(getVolume())
     }
     private fun isMuted(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
@@ -526,8 +607,28 @@ class DlnaRenderer(
 
     private fun setTransport(state: String) {
         if (transportState == state) return
+        Log.i(TAG, "dlna: transport $transportState -> $state (subs=${subscribers.size})")
         transportState = state
         notifyEvent(SVC_AVT)
+        listener?.onRendererStateChanged(state, nowPlaying)
+    }
+
+    // Pull title/artist/album/art/duration out of the DIDL-Lite the controller sent.
+    private fun parseDidl(meta: String): NowPlaying? {
+        if (meta.isBlank()) return null
+        fun tag(name: String): String {
+            val m = Regex("(?is)<$name[^>]*>(.*?)</$name>").find(meta) ?: return ""
+            return xmlUnescape(m.groupValues[1].trim())
+        }
+        val title = tag("dc:title")
+        val artist = tag("upnp:artist").ifBlank { tag("dc:creator") }
+        val album = tag("upnp:album")
+        val art = Regex("(?is)<upnp:albumArtURI[^>]*>(.*?)</upnp:albumArtURI>")
+            .find(meta)?.groupValues?.get(1)?.trim()?.let { xmlUnescape(it) } ?: ""
+        val durAttr = Regex("(?i)duration=\"([0-9:.]+)\"").find(meta)?.groupValues?.get(1) ?: ""
+        val durSec = parseHms(durAttr).let { if (it > 0) it / 1000 else 0 }
+        if (title.isBlank() && artist.isBlank()) return null
+        return NowPlaying(title, artist, album, art, durSec)
     }
 
     // ── GENA eventing ───────────────────────────────────────────────────────────
@@ -551,6 +652,7 @@ class DlnaRenderer(
         val callback = Regex("(?im)^CALLBACK:\\s*<([^>]+)>").find(head)?.groupValues?.get(1) ?: ""
         val newSid = "uuid:${UUID.randomUUID()}"
         if (callback.isNotEmpty()) subscribers[newSid] = Sub(callback)
+        Log.i(TAG, "dlna: GENA subscribe ${service.substringAfterLast(':')} cb=$callback")
         respond(out, "200 OK", "text/plain", "",
             "SID: $newSid\r\nTIMEOUT: Second-$EVENT_TIMEOUT_S\r\n")
         // Initial event so the controller has our current state immediately.
@@ -587,25 +689,39 @@ class DlnaRenderer(
             "<e:property><LastChange>${xmlEscape(lastChange)}</LastChange></e:property>" +
             "</e:propertyset>"
         val bytes = propset.toByteArray(StandardCharsets.UTF_8)
-        val conn = (URL(sub.callback).openConnection() as HttpURLConnection).apply {
-            requestMethod = "NOTIFY"
-            doOutput = true
-            connectTimeout = 3000; readTimeout = 3000
-            setRequestProperty("CONTENT-TYPE", "text/xml; charset=\"utf-8\"")
-            setRequestProperty("NT", "upnp:event")
-            setRequestProperty("NTS", "upnp:propchange")
-            setRequestProperty("SID", sid)
-            setRequestProperty("SEQ", sub.seq.toString())
-        }
+        // NOTE: HttpURLConnection CANNOT do this — setRequestMethod("NOTIFY") throws
+        // ProtocolException (Java only permits a fixed method set), which silently killed every
+        // GENA event and left controllers blind to track changes. Hand-roll the request instead.
+        val url = URL(sub.callback)
+        val port = if (url.port > 0) url.port else 80
+        val path = (if (url.path.isNullOrEmpty()) "/" else url.path) +
+            (if (url.query.isNullOrEmpty()) "" else "?" + url.query)
+        val head = "NOTIFY $path HTTP/1.1\r\n" +
+            "HOST: ${url.host}:$port\r\n" +
+            "CONTENT-TYPE: text/xml; charset=\"utf-8\"\r\n" +
+            "CONTENT-LENGTH: ${bytes.size}\r\n" +
+            "NT: upnp:event\r\n" +
+            "NTS: upnp:propchange\r\n" +
+            "SID: $sid\r\n" +
+            "SEQ: ${sub.seq}\r\n" +
+            "CONNECTION: close\r\n\r\n"
         sub.seq++
         runCatching {
-            conn.outputStream.use { it.write(bytes) }
-            conn.responseCode
+            Socket().use { sock ->
+                sock.connect(InetSocketAddress(url.host, port), 3000)
+                sock.soTimeout = 3000
+                sock.getOutputStream().apply {
+                    write(head.toByteArray(StandardCharsets.UTF_8))
+                    write(bytes)
+                    flush()
+                }
+                readHead(BufferedInputStream(sock.getInputStream()))   // best-effort ack
+            }
         }.onFailure {
+            Log.w(TAG, "dlna: GENA notify failed (${sub.callback}): ${it.message}")
             // Controller gone — drop the subscription so we stop hammering it.
             subscribers.remove(sid)
         }
-        conn.disconnect()
     }
 
     // ── HTTP helpers (same shape as DialServer) ─────────────────────────────────
@@ -741,6 +857,11 @@ private const val SCPD_AVT = """<?xml version="1.0"?>
 <argument><name>InstanceID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_InstanceID</relatedStateVariable></argument>
 <argument><name>CurrentURI</name><direction>in</direction><relatedStateVariable>AVTransportURI</relatedStateVariable></argument>
 <argument><name>CurrentURIMetaData</name><direction>in</direction><relatedStateVariable>AVTransportURIMetaData</relatedStateVariable></argument>
+</argumentList></action>
+<action><name>SetNextAVTransportURI</name><argumentList>
+<argument><name>InstanceID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_InstanceID</relatedStateVariable></argument>
+<argument><name>NextURI</name><direction>in</direction><relatedStateVariable>NextAVTransportURI</relatedStateVariable></argument>
+<argument><name>NextURIMetaData</name><direction>in</direction><relatedStateVariable>NextAVTransportURIMetaData</relatedStateVariable></argument>
 </argumentList></action>
 <action><name>Play</name><argumentList>
 <argument><name>InstanceID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_InstanceID</relatedStateVariable></argument>

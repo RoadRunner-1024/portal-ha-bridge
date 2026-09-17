@@ -147,6 +147,26 @@ object HaDiscovery {
         return """{"name":"Mic Mute","unique_id":"${deviceId}_mic_mute","device":${device(deviceId, name)},"state_topic":"${micMuteStateTopic(deviceId)}","command_topic":"${micMuteCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:microphone-off"}"""
     }
 
+    // ── Music-speaker (DLNA) switch + now-playing overlay switch ────────────────
+
+    fun dlnaDiscoveryTopic(deviceId: String) = "homeassistant/switch/${deviceId}_dlna/config"
+    fun dlnaStateTopic(deviceId: String) = "portal/$deviceId/dlna/state"
+    fun dlnaCommandTopic(deviceId: String) = "portal/$deviceId/dlna/set"
+
+    fun dlnaConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Music Speaker","unique_id":"${deviceId}_dlna","device":${device(deviceId, name)},"state_topic":"${dlnaStateTopic(deviceId)}","command_topic":"${dlnaCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:cast-audio","entity_category":"config"}"""
+    }
+
+    fun npOverlayDiscoveryTopic(deviceId: String) = "homeassistant/switch/${deviceId}_np_overlay/config"
+    fun npOverlayStateTopic(deviceId: String) = "portal/$deviceId/npoverlay/state"
+    fun npOverlayCommandTopic(deviceId: String) = "portal/$deviceId/npoverlay/set"
+
+    fun npOverlayConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Now Playing Screen","unique_id":"${deviceId}_np_overlay","device":${device(deviceId, name)},"state_topic":"${npOverlayStateTopic(deviceId)}","command_topic":"${npOverlayCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:playlist-play","entity_category":"config"}"""
+    }
+
     // ── Volume number (slider) ────────────────────────────────────────────────
 
     fun volumeDiscoveryTopic(deviceId: String) =
@@ -457,7 +477,9 @@ object HaDiscovery {
         presenceEnableCommandTopic(deviceId),
         screenTimeoutCommandTopic(deviceId),
         screenTimeoutMinsCommandTopic(deviceId),
-        tempOffsetCommandTopic(deviceId)
+        tempOffsetCommandTopic(deviceId),
+        dlnaCommandTopic(deviceId),
+        npOverlayCommandTopic(deviceId)
     )
 
     // ── Shared helpers ────────────────────────────────────────────────────────

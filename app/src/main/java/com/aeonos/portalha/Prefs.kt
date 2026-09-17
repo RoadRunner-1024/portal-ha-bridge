@@ -53,6 +53,12 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("dlna_enabled", true)
         set(v) = sp.edit().putBoolean("dlna_enabled", v).apply()
 
+    // Show the on-screen now-playing overlay (art / title / controls / lyrics) while the Portal
+    // is playing as a DLNA speaker. Independent of dlnaEnabled so playback can be silent-screen.
+    var nowPlayingOverlayEnabled: Boolean
+        get() = sp.getBoolean("now_playing_overlay", true)
+        set(v) = sp.edit().putBoolean("now_playing_overlay", v).apply()
+
     val deviceId: String
         get() {
             val existing = sp.getString("device_id", null)

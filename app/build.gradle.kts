@@ -22,8 +22,8 @@ android {
         // 28 = Android 9 (Portal+); 29 = Android 10 (Portal / Portal Mini).
         minSdk = 28
         targetSdk = 35
-        versionCode = 46
-        versionName = "1.20.5"
+        versionCode = 47
+        versionName = "1.20.6"
 
         // Portals are ARM — ship only ARM native libs (Vosk/RootEncoder bundle x86 +
         // x86_64 + mips for emulators, ~20 MB of dead weight on real hardware).
@@ -70,6 +70,9 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.paho.mqtt)
+
+    // Extracts a dominant/vibrant colour from album art for the lyrics-view gradient.
+    implementation("androidx.palette:palette-ktx:1.0.0")
 
     // RTSP server (headless RtspServerStream). Kotlin-2.0-era versions so they
     // build cleanly under our Kotlin 2.0.20 — no metadata hacks.

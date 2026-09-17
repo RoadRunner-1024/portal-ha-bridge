@@ -16,6 +16,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
@@ -30,6 +31,7 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 
 class BridgeService : Service() {
 
@@ -399,6 +401,19 @@ class BridgeService : Service() {
     private var soundMonitor: SoundMonitor? = null
     private var dialServer: DialServer? = null
     private var dlnaRenderer: DlnaRenderer? = null
+    private var nowPlayingOverlay: NowPlayingOverlay? = null
+    // Music-Assistant-truth poller (see MaControl.poll): owns the overlay whenever HA can tell us
+    // what's really playing, because the DLNA renderer goes blind under MA's flow mode.
+    @Volatile private var maPollRunning = false
+    @Volatile private var maDriving = false
+    @Volatile private var maTrackKey = ""
+    @Volatile private var maPlaying = false
+    @Volatile private var maPosBaseMs = 0
+    @Volatile private var maPosBaseAt = 0L
+    @Volatile private var maPosStamp = ""
+    @Volatile private var maDurationMs = 0
+    @Volatile private var maIdlePolls = 0
+    @Volatile private var dlnaTrackKey = ""     // "title|artist" of the track the overlay shows
     private var twoWay: TwoWayEngine? = null
     private var twoWayOrb: AnnounceOrbOverlay? = null
     @Volatile private var twoWayChannelOpen = false
@@ -965,10 +980,7 @@ class BridgeService : Service() {
 
         // DLNA MediaRenderer: makes the Portal a speaker in Music Assistant (and any DLNA
         // controller). Modelled on DialServer; playback yields to calls/Alexa via audio focus.
-        if (p.dlnaEnabled) {
-            dlnaRenderer = DlnaRenderer(this, friendlyName = { prefs?.deviceName ?: "Portal" })
-                .also { it.start() }
-        }
+        if (p.dlnaEnabled) startDlna()
 
         startCallWatch()
 
@@ -1130,7 +1142,7 @@ class BridgeService : Service() {
         falconReadiness?.stop(); falconReadiness = null
         twoWay?.stop(); twoWayOrb?.hide()
         dialServer?.stop(); dialServer = null
-        dlnaRenderer?.stop(); dlnaRenderer = null
+        stopDlna()
         wakeHandler.removeCallbacks(reclaimTimeout); wakeHandler.removeCallbacks(reclaimDebounce)
         wakeHandler.removeCallbacks(stolenReturn); foregroundStolenMs = 0L
         runCatching { application.unregisterActivityLifecycleCallbacks(ourActivityWatch) }
@@ -1258,6 +1270,156 @@ class BridgeService : Service() {
     // While the screen is off, Portal's launcher (com.facebook.alohaapps.launcher)
     // asserts HOME behind the dark screen, so we wake to the launcher instead of
     // the dashboard. Bring our dashboard back to the front on screen-on. Our
+    // ── DLNA / Music Assistant speaker ──────────────────────────────────────────
+
+    private fun startDlna() {
+        if (dlnaRenderer != null) return
+        nowPlayingOverlay = NowPlayingOverlay(
+            this,
+            onPrev = { MaControl.previous(this) },
+            onNext = { MaControl.next(this) },
+            // Route play/pause through MA too when it's driving, so its queue state stays in sync
+            // (pausing only the local renderer would leave MA thinking it's still playing).
+            onPlayPause = { if (maDriving) MaControl.playPause(this) else dlnaRenderer?.playPauseToggle() },
+            onStop = { dlnaRenderer?.stopFromUi() },
+            onSetVolume = { pct -> dlnaRenderer?.setVolumeFromUi(pct) },
+            onClose = { nowPlayingOverlay?.hide() },
+            positionProvider = {
+                if (maDriving) {
+                    if (maPlaying) (maPosBaseMs + (SystemClock.elapsedRealtime() - maPosBaseAt)).toInt()
+                    else maPosBaseMs
+                } else dlnaRenderer?.trackPositionMs() ?: 0
+            },
+            durationProvider = { if (maDriving) maDurationMs else dlnaRenderer?.trackDurationMs() ?: 0 },
+        )
+        startMaPoll()
+        dlnaRenderer = DlnaRenderer(this, friendlyName = { prefs?.deviceName ?: "Portal" }).apply {
+            listener = object : DlnaRenderer.Listener {
+                override fun onRendererStateChanged(state: String, np: DlnaRenderer.NowPlaying?) =
+                    onDlnaState(state, np)
+                override fun onRendererVolumeChanged(volumePct: Int) {
+                    nowPlayingOverlay?.setVolume(volumePct)
+                }
+            }
+            start()
+        }
+    }
+
+    private fun stopDlna() {
+        maPollRunning = false; maDriving = false; maTrackKey = ""
+        dlnaRenderer?.stop(); dlnaRenderer = null
+        nowPlayingOverlay?.hide(); nowPlayingOverlay = null
+        dlnaTrackKey = ""
+    }
+
+    // ── Music Assistant state poller ────────────────────────────────────────────
+    // Asks HA what this Portal's MA player is actually playing. Under flow mode the renderer
+    // only ever hears about the first track of the queue, so this is the only reliable source
+    // of the current title/artist/art/position.
+
+    private fun startMaPoll() {
+        if (maPollRunning) return
+        maPollRunning = true
+        thread(isDaemon = true, name = "ma-poll") {
+            while (maPollRunning) {
+                runCatching { pollMaOnce() }
+                    .onFailure { Log.i("PortalHA", "dlna: MA poll failed: ${it.message}") }
+                Thread.sleep(3000)
+            }
+        }
+    }
+
+    private fun pollMaOnce() {
+        val s = MaControl.poll(this)
+        if (s == null) {
+            // HA not configured / entity not resolvable → leave the overlay to the DLNA path.
+            if (maDriving) { maDriving = false; maTrackKey = "" }
+            return
+        }
+        if (!maDriving) Log.i("PortalHA", "dlna: MA state polling is driving the overlay")
+        maDriving = true
+        maPlaying = s.playing
+        maDurationMs = s.durationMs
+        // Re-anchor the clock only when HA actually re-reports the position (track change, seek,
+        // pause/resume) — otherwise keep counting on the local monotonic clock. Rebasing on every
+        // poll would make the progress twitch with network latency, and it keeps us independent
+        // of any clock skew between the Portal and HA.
+        if (s.positionStamp != maPosStamp || !s.playing) {
+            maPosStamp = s.positionStamp
+            maPosBaseMs = s.positionMs
+            maPosBaseAt = SystemClock.elapsedRealtime()
+        }
+
+        val overlayOn = prefs?.nowPlayingOverlayEnabled == true
+        if (!overlayOn || inCall) {                 // deliberate: switch off / call → hide at once
+            if (maTrackKey.isNotEmpty()) {
+                Log.i("PortalHA", "dlna: overlay hide (overlayOn=$overlayOn inCall=$inCall)")
+                nowPlayingOverlay?.hide(); maTrackKey = ""
+            }
+            maIdlePolls = 0
+            return
+        }
+        if (!s.active) {
+            // MA dips to a blank/idle state for a moment between tracks; tearing the overlay down
+            // on a single such poll is what made the lyrics view vanish mid-song. Need it to be
+            // genuinely idle for a few polls running before we believe it.
+            maIdlePolls++
+            if (maIdlePolls >= 3 && maTrackKey.isNotEmpty()) {
+                Log.i("PortalHA", "dlna: overlay hide (idle, state=${s.state})")
+                nowPlayingOverlay?.hide(); maTrackKey = ""
+            }
+            return
+        }
+        maIdlePolls = 0
+        val key = "${s.title}|${s.artist}"
+        if (key != maTrackKey) {
+            maTrackKey = key
+            maPosStamp = s.positionStamp
+            maPosBaseMs = s.positionMs
+            maPosBaseAt = SystemClock.elapsedRealtime()
+            Log.i("PortalHA", "dlna: MA now playing '${s.title}' by '${s.artist}' " +
+                "pos=${s.positionMs}ms dur=${s.durationMs}ms")
+            nowPlayingOverlay?.show(s.title, s.artist, s.album, s.artUrl, s.playing,
+                dlnaRenderer?.volumePct() ?: 50)
+            nowPlayingOverlay?.setLyrics(null)          // clear stale lyrics while fetching
+            thread(isDaemon = true, name = "ma-lyrics") {
+                val res = Lyrics.fetch(s.artist, s.title, s.album, s.durationMs / 1000)
+                if (maTrackKey == key) nowPlayingOverlay?.setLyrics(res)
+            }
+        } else {
+            nowPlayingOverlay?.update(s.title, s.artist, s.album, s.artUrl, s.playing)
+        }
+    }
+
+    // Renderer transport/track changes → drive the now-playing overlay + lyrics. Fires on the
+    // renderer's play thread; all overlay methods post to the main thread themselves.
+    private fun onDlnaState(state: String, np: DlnaRenderer.NowPlaying?) {
+        if (maDriving) return        // HA/MA polling owns the overlay — its track info is correct
+        val overlayOn = prefs?.nowPlayingOverlayEnabled == true
+        val active = (state == "PLAYING" || state == "PAUSED_PLAYBACK" || state == "TRANSITIONING") && np != null
+        if (!overlayOn || !active || inCall) {
+            if (state == "STOPPED" || state == "NO_MEDIA_PRESENT" || !overlayOn || inCall)
+                nowPlayingOverlay?.hide()
+            if (state == "STOPPED" || state == "NO_MEDIA_PRESENT") dlnaTrackKey = ""
+            return
+        }
+        np!!
+        val playing = state == "PLAYING"
+        val key = "${np.title}|${np.artist}"
+        Log.i("PortalHA", "dlna: onState $state title=${np.title} keyChanged=${key != dlnaTrackKey}")
+        if (key != dlnaTrackKey) {
+            dlnaTrackKey = key
+            nowPlayingOverlay?.show(np.title, np.artist, np.album, np.artUri, playing, dlnaRenderer?.volumePct() ?: 50)
+            nowPlayingOverlay?.setLyrics(null)              // clear stale lyrics while fetching
+            thread(isDaemon = true, name = "dlna-lyrics") {
+                val res = Lyrics.fetch(np.artist, np.title, np.album, np.durationSec)
+                if (dlnaTrackKey == key) nowPlayingOverlay?.setLyrics(res)   // still the same track
+            }
+        } else {
+            nowPlayingOverlay?.update(np.title, np.artist, np.album, np.artUri, playing)
+        }
+    }
+
     // SYSTEM_ALERT_WINDOW permission exempts this from background-start limits.
     // DashboardActivity is singleTask, so this reuses the existing instance.
     private fun reclaimForeground() {
@@ -1632,7 +1794,9 @@ class BridgeService : Service() {
             HaDiscovery.screenTimeoutCommandTopic(p.deviceId),
             HaDiscovery.screenTimeoutMinsCommandTopic(p.deviceId),
             if (sensorBridge?.hasTemperature == true) HaDiscovery.tempOffsetCommandTopic(p.deviceId) else null,
-            HaDiscovery.haTokenCommandTopic(p.deviceId)
+            HaDiscovery.haTokenCommandTopic(p.deviceId),
+            HaDiscovery.dlnaCommandTopic(p.deviceId),
+            HaDiscovery.npOverlayCommandTopic(p.deviceId)
         ).forEach { client.subscribe(it, 1) }
 
         // Intercom: subscribe to presence/lock/audio and announce ourselves.
@@ -1743,6 +1907,10 @@ class BridgeService : Service() {
         pub(HaDiscovery.brightnessDiscoveryTopic(p.deviceId), HaDiscovery.brightnessConfigPayload(p.deviceId, p.deviceName))
         // HA long-lived token, settable from HA (for the Jarvis tool-provider's smart-home control).
         pub(HaDiscovery.haTokenDiscoveryTopic(p.deviceId), HaDiscovery.haTokenConfigPayload(p.deviceId, p.deviceName))
+        // Music-speaker (DLNA) on/off, and the now-playing overlay on/off.
+        pub(HaDiscovery.dlnaDiscoveryTopic(p.deviceId), HaDiscovery.dlnaConfigPayload(p.deviceId, p.deviceName))
+        pub(HaDiscovery.npOverlayDiscoveryTopic(p.deviceId), HaDiscovery.npOverlayConfigPayload(p.deviceId, p.deviceName))
+        publishDlnaState(p)
 
         // Camera, motion-enable and streaming-enable switches exist only while
         // the camera service is enabled; motion entities additionally require
@@ -1830,7 +1998,30 @@ class BridgeService : Service() {
             HaDiscovery.screenTimeoutMinsCommandTopic(p.deviceId) -> handleScreenTimeoutMinsCommand(payload, p)
             HaDiscovery.tempOffsetCommandTopic(p.deviceId)        -> handleTempOffsetCommand(payload, p)
             HaDiscovery.haTokenCommandTopic(p.deviceId)           -> handleHaTokenCommand(payload, p)
+            HaDiscovery.dlnaCommandTopic(p.deviceId)              -> handleDlnaCommand(payload, p)
+            HaDiscovery.npOverlayCommandTopic(p.deviceId)         -> handleNpOverlayCommand(payload, p)
         }
+    }
+
+    private fun handleDlnaCommand(payload: String, p: Prefs) {
+        val on = payload.equals("ON", ignoreCase = true)
+        if (on != p.dlnaEnabled) p.dlnaEnabled = on
+        if (on) startDlna() else stopDlna()
+        publishDlnaState(p)
+        Log.i(TAG, "dlna: HA set speaker enabled=$on")
+    }
+
+    private fun handleNpOverlayCommand(payload: String, p: Prefs) {
+        val on = payload.equals("ON", ignoreCase = true)
+        if (on != p.nowPlayingOverlayEnabled) p.nowPlayingOverlayEnabled = on
+        if (!on) nowPlayingOverlay?.hide()   // takes effect for the next track if turned back on
+        publishDlnaState(p)
+        Log.i(TAG, "dlna: HA set now-playing overlay enabled=$on")
+    }
+
+    private fun publishDlnaState(p: Prefs) {
+        publishRaw(HaDiscovery.dlnaStateTopic(p.deviceId), if (p.dlnaEnabled) "ON" else "OFF", 1, retained = true)
+        publishRaw(HaDiscovery.npOverlayStateTopic(p.deviceId), if (p.nowPlayingOverlayEnabled) "ON" else "OFF", 1, retained = true)
     }
 
     private fun handleScreenCommand(cmd: String) {

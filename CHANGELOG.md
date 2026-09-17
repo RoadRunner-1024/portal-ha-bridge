@@ -4,6 +4,29 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.20.6 — Now-playing screen with album art and sing-along lyrics
+
+**Added**
+- **A now-playing screen while music is playing.** Album art, title/album/artist, and transport
+  controls (previous / play-pause / next / stop) with a volume slider, over your screensaver.
+- **Sing-along lyrics.** Tap the album art for a full lyrics view in the style of the Music
+  Assistant player: the current line is highlighted and stays centred on screen while the rest
+  of the song scrolls past it and fades away, with the background tinted from the album art.
+  Lyrics come from LRCLIB (free, no account needed); tracks without lyrics simply say so.
+- **Two Home Assistant switches per Portal** — "Music Speaker" (the DLNA renderer) and
+  "Now Playing Screen" (this overlay), so each Portal can be turned on or off independently.
+- **Next/previous** ask Music Assistant to skip, since a DLNA speaker doesn't own the queue.
+
+**Fixed**
+- **The screen now follows the queue.** Music Assistant's "flow mode" sends a whole queue as one
+  continuous stream, so the speaker itself is never told when a track changes — the screen used
+  to stay stuck on whichever track was playing when the stream began. Track details now come
+  from Music Assistant via Home Assistant, so they stay correct either way.
+- Album art now refreshes on every track change.
+- Event notifications to controllers (GENA) never actually sent, so controllers were never told
+  when playback state changed.
+- Gapless queue playback (`SetNextAVTransportURI`) is now supported.
+
 ## v1.20.5 — The Portal is now a speaker (Music Assistant / DLNA)
 
 **Added**
