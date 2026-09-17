@@ -140,8 +140,8 @@ class NowPlayingOverlay(
                 .onFailure { Log.w(TAG, "artwork decode failed", it) }.getOrNull() ?: return@thread
             val grad = runCatching {
                 val p = Palette.from(bmp).generate()
-                buildLightGradient(p.getLightVibrantColor(
-                    p.getVibrantColor(p.getDominantColor(0xFFBFC0C8.toInt()))))
+                buildGradient(p.getVibrantColor(
+                    p.getDominantColor(0xFFBFC0C8.toInt())))
             }.getOrNull()
             main.post {
                 artFromBytes = true
@@ -389,14 +389,16 @@ class NowPlayingOverlay(
         leftCol?.gravity = (if (dark) Gravity.BOTTOM else Gravity.TOP) or Gravity.CENTER_HORIZONTAL
         lyricsClip?.visibility = if (dark) View.GONE else View.VISIBLE
 
-        // Palette.
-        val primaryTxt = if (dark) Color.WHITE else 0xFF17171B.toInt()
-        val secondaryTxt = if (dark) 0xFFD2D4DC.toInt() else 0xFF7A7A82.toInt()
-        val iconCol = if (dark) Color.WHITE else 0xFF2A2A30.toInt()
-        val circleBg = if (dark) Color.WHITE else 0xFF3A3A42.toInt()
-        val circleGlyph = if (dark) 0xFF15151A.toInt() else Color.WHITE
+        // Palette. In lyrics mode the backdrop is the album's colour, so contrast follows it:
+        // light text on a rich/dark sleeve, dark text on a pale one.
+        val onDark = dark || bgIsDark()
+        val primaryTxt = if (onDark) Color.WHITE else 0xFF17171B.toInt()
+        val secondaryTxt = if (onDark) 0xCCFFFFFF.toInt() else 0xFF7A7A82.toInt()
+        val iconCol = if (onDark) Color.WHITE else 0xFF2A2A30.toInt()
+        val circleBg = if (onDark) Color.WHITE else 0xFF3A3A42.toInt()
+        val circleGlyph = if (onDark) 0xFF15151A.toInt() else Color.WHITE
         val ctrlTint = ColorStateList.valueOf(iconCol)
-        val trackTint = ColorStateList.valueOf(if (dark) 0x59FFFFFF else 0x33000000)
+        val trackTint = ColorStateList.valueOf(if (onDark) 0x59FFFFFF else 0x33000000)
         val shadow = dark
 
         titleView?.setTextColor(primaryTxt)
@@ -428,22 +430,42 @@ class NowPlayingOverlay(
         }
     }
 
-    /** Soft top-to-bottom gradient for the lyrics view — tinted from the album art, kept light.
-     *  Vertical (not diagonal) so each line of lyrics sits over a uniform brightness. */
+    /** Top-to-bottom gradient for the lyrics view, in the album's own colour. Vertical (not
+     *  diagonal) so every line of lyrics sits over a uniform brightness. */
     private fun lightBgDrawable(): GradientDrawable {
-        val cols = lyricsGradient
-            ?: intArrayOf(0xFFF6F6F8.toInt(), 0xFFECECEF.toInt(), 0xFFE2E2E6.toInt())
+        val cols = lyricsGradient ?: NEUTRAL_GRADIENT
         return GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, cols)
     }
 
-    private fun buildLightGradient(base: Int): IntArray = intArrayOf(
-        blendToWhite(base, 0.90f), blendToWhite(base, 0.80f), blendToWhite(base, 0.70f))
+    /**
+     * Build the backdrop from the artwork's own colour, keeping it saturated rather than washing
+     * it out — a vivid sleeve should give a rich wall of colour, as the MA player does. Artwork
+     * with no real colour in it (mostly black-and-white sleeves) falls back to a neutral light
+     * gradient instead of a muddy grey-brown.
+     */
+    private fun buildGradient(base: Int): IntArray? {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(base, hsv)
+        if (hsv[1] < 0.22f) return null            // too washed out to be worth tinting
+        // Lift very dark or very pale swatches into a range that reads well full-screen.
+        hsv[1] = hsv[1].coerceIn(0.35f, 0.85f)
+        hsv[2] = hsv[2].coerceIn(0.35f, 0.80f)
+        val top = Color.HSVToColor(hsv)
+        return intArrayOf(top, shade(top, 0.86f), shade(top, 0.70f))
+    }
 
-    private fun blendToWhite(c: Int, t: Float): Int {
-        val r = (Color.red(c) * (1 - t) + 255 * t).toInt()
-        val g = (Color.green(c) * (1 - t) + 255 * t).toInt()
-        val b = (Color.blue(c) * (1 - t) + 255 * t).toInt()
-        return Color.rgb(r, g, b)
+    private fun shade(c: Int, f: Float) = Color.rgb(
+        (Color.red(c) * f).toInt().coerceIn(0, 255),
+        (Color.green(c) * f).toInt().coerceIn(0, 255),
+        (Color.blue(c) * f).toInt().coerceIn(0, 255))
+
+    /** True when the lyrics backdrop is dark enough to need light text on top of it. */
+    private fun bgIsDark(): Boolean {
+        val cols = lyricsGradient ?: return false
+        val mid = cols[cols.size / 2]
+        // Rec. 601 luma — good enough to decide black vs white text.
+        val luma = (0.299 * Color.red(mid) + 0.587 * Color.green(mid) + 0.114 * Color.blue(mid)) / 255.0
+        return luma < 0.55
     }
 
     // ── Album art ───────────────────────────────────────────────────────────────
@@ -471,9 +493,7 @@ class NowPlayingOverlay(
             if (bmp == null) { Log.w(TAG, "art decode returned null: $uri"); return@thread }
             val grad = runCatching {
                 val p = Palette.from(bmp).generate()
-                val base = p.getLightVibrantColor(
-                    p.getVibrantColor(p.getDominantColor(0xFFBFC0C8.toInt())))
-                buildLightGradient(base)
+                buildGradient(p.getVibrantColor(p.getDominantColor(0xFFBFC0C8.toInt())))
             }.getOrNull()
             main.post {
                 if (lastArtUri != uri) return@post
@@ -532,7 +552,8 @@ class NowPlayingOverlay(
                 val start = sb.length
                 sb.append(lines[i].text.ifBlank { "♪" }).append("\n\n")
                 if (i == current) {
-                    sb.setSpan(ForegroundColorSpan(0xFF0A0A0C.toInt()), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    val cur = if (!lyricsMode || bgIsDark()) Color.WHITE else 0xFF0A0A0C.toInt()
+                    sb.setSpan(ForegroundColorSpan(cur), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     sb.setSpan(RelativeSizeSpan(1.12f), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 } else {
@@ -544,7 +565,7 @@ class NowPlayingOverlay(
             lv.text = sb
             centerCurrentLine(current)          // current < 0 → park the first line on the midpoint
         } else {
-            lv.setTextColor(if (lyricsMode) 0x8A000000.toInt() else 0x80FFFFFF.toInt())
+            lv.setTextColor(lyricFade(2))
             lv.text = if (!plain.isNullOrBlank()) plain else "No lyrics found"
         }
     }
@@ -574,10 +595,12 @@ class NowPlayingOverlay(
         }
     }
 
-    /** Black text with distance-based alpha → lines fade in/out around the current one. */
+    /** Distance-based alpha → lines fade in/out around the current one, in whichever ink the
+     *  backdrop calls for. */
     private fun lyricFade(d: Int): Int {
+        if (!lyricsMode) return 0x80FFFFFF.toInt()
         val a = when (d) { 0, 1 -> 0x9E; 2 -> 0x70; 3 -> 0x50; 4 -> 0x3C; else -> 0x2C }
-        return if (lyricsMode) (a shl 24) /* black + alpha */ else (0x80FFFFFF.toInt())
+        return if (bgIsDark()) (a shl 24) or 0x00FFFFFF else (a shl 24)   // white vs black ink
     }
 
     // ── Vector transport icon (no colour-emoji glyphs) ──────────────────────────
@@ -702,5 +725,10 @@ class NowPlayingOverlay(
         }
     }
 
-    companion object { private const val TAG = "NPOverlay" }
+    companion object {
+        private const val TAG = "NPOverlay"
+        /** Used when the artwork has no real colour to borrow (mono/greyscale sleeves). */
+        private val NEUTRAL_GRADIENT =
+            intArrayOf(0xFFF6F6F8.toInt(), 0xFFECECEF.toInt(), 0xFFE2E2E6.toInt())
+    }
 }

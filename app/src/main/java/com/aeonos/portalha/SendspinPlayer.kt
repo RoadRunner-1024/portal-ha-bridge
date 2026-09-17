@@ -24,9 +24,15 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
-/** Absent and present-but-null both mean "nothing to show". Defined here rather than imported
- *  because the library's own helper isn't present in every release. */
-private fun <T> JsonOptional<T>.present(): T? = (this as? JsonOptional.Present)?.value
+/**
+ * server/state carries only what CHANGED: an absent field means "unchanged", while a present
+ * null means "cleared". Treating absent as empty blanks the title/artist on any partial update,
+ * which churns the track identity and throws away the lyrics — so merge against what we had.
+ */
+private fun JsonOptional<String>.merge(previous: String): String = when (this) {
+    is JsonOptional.Present -> value.orEmpty()
+    else -> previous
+}
 
 /**
  * Sendspin player — the Portal as a synchronised multi-room speaker.
@@ -48,6 +54,13 @@ class SendspinPlayer(
     private var client: SendSpinClient? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var connectJob: Job? = null
+
+    // Running view of the track, since server/state only sends what changed.
+    @Volatile private var curTitle = ""
+    @Volatile private var curArtist = ""
+    @Volatile private var curAlbum = ""
+    @Volatile private var curPosMs = 0
+    @Volatile private var curDurMs = 0
 
     /** What Sendspin says is playing. Pushed to us — no polling, no separate artwork fetch. */
     data class Track(
@@ -136,24 +149,29 @@ class SendspinPlayer(
         s.launch {
             c.serverState.collect { st ->
                 val md = st.metadata ?: return@collect
-                val title = md.title.present().orEmpty()
-                val artist = md.artist.present().orEmpty()
-                if (title.isBlank() && artist.isBlank()) { onTrack?.invoke(null); return@collect }
-                val playing = c.groupPlaybackState.value != GroupPlaybackState.PAUSED
+                curTitle = md.title.merge(curTitle)
+                curArtist = md.artist.merge(curArtist)
+                curAlbum = md.album.merge(curAlbum)
+                // progress is a plain nullable: null here also means "unchanged".
+                md.progress?.let { curPosMs = it.trackProgress.toInt(); curDurMs = it.trackDuration.toInt() }
+                if (curTitle.isBlank() && curArtist.isBlank()) { onTrack?.invoke(null); return@collect }
                 onTrack?.invoke(Track(
-                    title = title,
-                    artist = artist,
-                    album = md.album.present().orEmpty(),
-                    playing = playing,
-                    positionMs = (md.progress?.trackProgress ?: 0L).toInt(),
-                    durationMs = (md.progress?.trackDuration ?: 0L).toInt(),
+                    title = curTitle,
+                    artist = curArtist,
+                    album = curAlbum,
+                    playing = c.groupPlaybackState.value != GroupPlaybackState.PAUSED,
+                    positionMs = curPosMs,
+                    durationMs = curDurMs,
                 ))
             }
         }
         s.launch {
             c.groupPlaybackState.collect { gs ->
                 Log.i(TAG, "sendspin: playback $gs")
-                if (gs == GroupPlaybackState.STOPPED) onTrack?.invoke(null)
+                if (gs == GroupPlaybackState.STOPPED) {
+                    curTitle = ""; curArtist = ""; curAlbum = ""; curPosMs = 0; curDurMs = 0
+                    onTrack?.invoke(null)
+                }
             }
         }
     }
