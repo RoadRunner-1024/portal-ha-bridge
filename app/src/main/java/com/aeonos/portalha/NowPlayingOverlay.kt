@@ -68,6 +68,7 @@ class NowPlayingOverlay(
     private val density = context.resources.displayMetrics.density
 
     @Volatile private var root: FrameLayout? = null
+    private var rootLp: WindowManager.LayoutParams? = null
     private var bgLayer: View? = null
     private var content: LinearLayout? = null
     private var leftCol: LinearLayout? = null
@@ -166,6 +167,18 @@ class NowPlayingOverlay(
         plain = result?.plain
         highlightedLine = -1
         renderLyrics(-1)
+    }
+
+    /**
+     * Re-assert this overlay above whatever was added after it. Overlay z-order is add order, so
+     * anything that appears later — the screensaver coming back, say — lands on top; removing and
+     * re-adding the same view restores our place without rebuilding it or losing any state.
+     */
+    fun bringToFront() = main.post {
+        val r = root ?: return@post
+        val lp = rootLp ?: return@post
+        runCatching { wm.removeView(r) }
+        runCatching { wm.addView(r, lp) }
     }
 
     fun hide() = main.post {
@@ -284,6 +297,7 @@ class NowPlayingOverlay(
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT)
+        rootLp = lp
         runCatching { wm.addView(r, lp); root = r }
         applyMode()
     }

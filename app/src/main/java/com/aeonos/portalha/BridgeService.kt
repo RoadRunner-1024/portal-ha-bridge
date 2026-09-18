@@ -1251,6 +1251,7 @@ class BridgeService : Service() {
                             if (pp.screensaverEnabled && pp.screensaverOnWake &&
                                 pp.screensaverUrl.isNotBlank() && !userLeftDashboard) {
                                 screensaver.show(pp.screensaverUrl) { exitScreensaver() }
+                                nowPlayingOverlay?.bringToFront()   // photos go under the music
                             }
                         }
                         // Reveal only once the dashboard has had time to be resumed and drawn;
@@ -3629,7 +3630,13 @@ class BridgeService : Service() {
         // appearing over a settings screen makes the UI unusable — fields can't be focused and
         // the keyboard never opens. Only the dashboard feeds lastInteractionMs (via
         // onUserInteraction), so any other screen would look idle and summon photos over itself.
-        val busy = inCall || dialServer?.appRunning == true || micYieldedForWake || falconPlaying()
+        // ★An assistant turn only had to tear the photos down because they'd cover her UI. With
+        // music playing that's no longer true — the listening bar is added after these overlays so
+        // it lands on top regardless — and tearing down meant the screensaver vanished mid-track
+        // and then came BACK on top of the now-playing screen. Leave it up in that case.
+        val musicUp = nowPlayingOverlay?.isShowing == true
+        val assistantBusy = !musicUp && (micYieldedForWake || falconPlaying())
+        val busy = inCall || dialServer?.appRunning == true || assistantBusy
         if (!screenOn || busy || !dashboardForeground) {
             if (screensaver.isShowing) screensaver.hide()
             return
@@ -3641,6 +3648,8 @@ class BridgeService : Service() {
         if (p.screensaverPresenceOnly && p.presenceEnabled && lastPublishedPresence != true) return
         if (System.currentTimeMillis() - lastInteractionMs < p.screensaverIdleSecs * 1000L) return
         screensaver.show(p.screensaverUrl) { exitScreensaver() }
+        // Photos were just added, so they're on top — put the now-playing screen back above them.
+        nowPlayingOverlay?.bringToFront()
     }
 
     /** Centre tap: drop the photos and restart both countdowns so it doesn't reappear at once. */
