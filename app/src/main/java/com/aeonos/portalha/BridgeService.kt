@@ -1262,6 +1262,7 @@ class BridgeService : Service() {
                                 pp.screensaverUrl.isNotBlank() && !userLeftDashboard) {
                                 screensaver.show(pp.screensaverUrl) { exitScreensaver() }
                                 nowPlayingOverlay?.bringToFront()   // photos go under the music
+                                raiseTalkButtons()
                             }
                         }
                         // Reveal only once the dashboard has had time to be resumed and drawn;
@@ -1408,6 +1409,18 @@ class BridgeService : Service() {
         }
     }
 
+    /**
+     * Put the intercom talk buttons back on top. The now-playing screen is full-screen and gets
+     * added after them, so it buries them — and they must stay reachable whatever is on screen.
+     * Posted to the main looper so it lands AFTER the overlay's own addView, which is itself
+     * posted; raising first would just let the overlay cover them again.
+     */
+    private fun raiseTalkButtons() {
+        Handler(Looper.getMainLooper()).post {
+            intercomOverlays.forEach { runCatching { it.bringToFront() } }
+        }
+    }
+
     private fun stopSendspin() {
         sendspinPlayer?.stop(); sendspinPlayer = null
         sendspinDriving = false; ssTrackKey = ""
@@ -1444,6 +1457,7 @@ class BridgeService : Service() {
                 "pos=${t.positionMs}ms dur=${t.durationMs}ms")
             // artUri is blank: the artwork arrives as bytes on its own channel.
             nowPlayingOverlay?.show(t.title, t.artist, t.album, "", t.playing, 50)
+            raiseTalkButtons()
             nowPlayingOverlay?.setLyrics(null)
             thread(isDaemon = true, name = "sendspin-lyrics") {
                 val res = Lyrics.fetch(t.artist, t.title, t.album, t.durationMs / 1000)
@@ -1536,6 +1550,7 @@ class BridgeService : Service() {
                 "pos=${s.positionMs}ms dur=${s.durationMs}ms")
             nowPlayingOverlay?.show(s.title, s.artist, s.album, s.artUrl, s.playing,
                 dlnaRenderer?.volumePct() ?: 50)
+            raiseTalkButtons()
             nowPlayingOverlay?.setLyrics(null)          // clear stale lyrics while fetching
             thread(isDaemon = true, name = "ma-lyrics") {
                 val res = Lyrics.fetch(s.artist, s.title, s.album, s.durationMs / 1000)
@@ -1565,6 +1580,7 @@ class BridgeService : Service() {
         if (key != dlnaTrackKey) {
             dlnaTrackKey = key
             nowPlayingOverlay?.show(np.title, np.artist, np.album, np.artUri, playing, dlnaRenderer?.volumePct() ?: 50)
+            raiseTalkButtons()
             nowPlayingOverlay?.setLyrics(null)              // clear stale lyrics while fetching
             thread(isDaemon = true, name = "dlna-lyrics") {
                 val res = Lyrics.fetch(np.artist, np.title, np.album, np.durationSec)

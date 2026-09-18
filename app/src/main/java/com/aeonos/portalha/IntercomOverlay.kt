@@ -67,6 +67,19 @@ class IntercomOverlay(
     private var view: TextView? = null
     private var params: WindowManager.LayoutParams? = null
 
+    /**
+     * Re-assert this button above overlays added after it. Overlay z-order is add order, and the
+     * talk buttons go up at startup, so anything full-screen appearing later — the now-playing
+     * screen — buries them. Re-adding the same view reclaims the top slot without rebuilding it.
+     * The talk buttons have to stay reachable whatever else is on screen.
+     */
+    fun bringToFront() {
+        val v = view ?: return
+        val lp = params ?: return
+        runCatching { wm.removeView(v) }
+        runCatching { wm.addView(v, lp) }
+    }
+
     // Staged-refloat state (see prepareRefloat/completeRefloat): the outgoing window
     // pending removal, whether the incoming one should stay hidden until revealed, and
     // whether a default-slot button has been right-aligned yet.
