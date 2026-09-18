@@ -53,6 +53,12 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("dlna_enabled", true)
         set(v) = sp.edit().putBoolean("dlna_enabled", v).apply()
 
+    // Closing the now-playing screen also stops the music, rather than just dismissing the
+    // screen and leaving it playing. Off by default — closing the screen is about the screen.
+    var closeStopsPlayback: Boolean
+        get() = sp.getBoolean("close_stops_playback", false)
+        set(v) = sp.edit().putBoolean("close_stops_playback", v).apply()
+
     // Join Music Assistant as a Sendspin player — synchronised multi-room audio, which DLNA
     // can't do (it gives each Portal standalone playback). Experimental, so off by default.
     var sendspinEnabled: Boolean

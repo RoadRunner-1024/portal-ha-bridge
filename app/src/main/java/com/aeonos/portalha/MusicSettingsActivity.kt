@@ -41,6 +41,10 @@ class MusicSettingsActivity : AppCompatActivity() {
             prefs.nowPlayingOverlayEnabled = checked
             BridgeService.applyMediaSettings(this)
         }
+        // Read live by the Close handler, so there's nothing to apply to the service.
+        findViewById<Switch>(R.id.sw_close_stops).setOnCheckedChangeListener { _, checked ->
+            prefs.closeStopsPlayback = checked
+        }
 
         updateUi()
     }
@@ -60,5 +64,6 @@ class MusicSettingsActivity : AppCompatActivity() {
         findViewById<Switch>(R.id.sw_dlna)?.isChecked = prefs.dlnaEnabled
         findViewById<Switch>(R.id.sw_sendspin)?.isChecked = prefs.sendspinEnabled
         findViewById<Switch>(R.id.sw_np_overlay)?.isChecked = prefs.nowPlayingOverlayEnabled
+        findViewById<Switch>(R.id.sw_close_stops)?.isChecked = prefs.closeStopsPlayback
     }
 }

@@ -1357,7 +1357,14 @@ class BridgeService : Service() {
                     }
                 }
             },
-            onClose = { nowPlayingOverlay?.hide() },
+            onClose = {
+                nowPlayingOverlay?.hide()
+                // Opt-in (Settings → Music): Close normally just puts the screen away and leaves
+                // the music playing, which is usually what you want on a shared speaker.
+                if (prefs?.closeStopsPlayback == true) {
+                    if (sendspinDriving) sendspinPlayer?.stopPlayback() else dlnaRenderer?.stopFromUi()
+                }
+            },
             positionProvider = {
                 when {
                     // Sendspin hands us a per-track progress snapshot; count on from it locally.
