@@ -2991,10 +2991,11 @@ class BridgeService : Service() {
         // Sendspin is muted rather than paused: it's a synchronised group stream, so stopping
         // would leave this Portal out of step with the other rooms afterwards.
         sendspinPlayer?.muteForSystem(true)
-        // The now-playing screen is a full-screen overlay and sits ON TOP of the Alexa listening
-        // bar and the intercom orb, so it has to get out of the way for the turn.
+        // Overlay z-order is add order, so the Alexa bar / intercom orb — added now — land on top
+        // of the now-playing screen by themselves. It must NOT be re-added during the turn though,
+        // or it jumps back over them. Leave it up: hiding it would just expose the screensaver,
+        // and the stack we want is Alexa/intercom → now playing → screensaver.
         systemAudioActive = true
-        nowPlayingOverlay?.hide()
         Log.i(TAG, "wake: yielded mic to assistant")
 
         val am = getSystemService(AudioManager::class.java)
@@ -3339,9 +3340,9 @@ class BridgeService : Service() {
         // The assistant turn is over — resume DLNA music if we paused it for the turn.
         dlnaRenderer?.resumeAfterSystem()
         sendspinPlayer?.muteForSystem(false)
-        // Turn's over — put the now-playing screen back if something is still playing.
+        // Turn's over — let track updates through again, and catch up on anything missed.
         systemAudioActive = false
-        ssLastTrack?.let { t -> ssTrackKey = ""; onSendspinTrack(t) }
+        ssLastTrack?.let { t -> onSendspinTrack(t) }
         wakeRecordingCallback?.let { cb ->
             runCatching { getSystemService(AudioManager::class.java)?.unregisterAudioRecordingCallback(cb) }
             wakeRecordingCallback = null
