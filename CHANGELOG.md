@@ -4,27 +4,46 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
-## v1.20.6 — Now-playing screen with album art and sing-along lyrics
+## v1.21.0 — A now-playing screen with sing-along lyrics, and a second way to be a speaker
 
 **Added**
 - **A now-playing screen while music is playing.** Album art, title/album/artist, and transport
   controls (previous / play-pause / next / stop) with a volume slider, over your screensaver.
+  Drag the progress bar to skip through a track.
 - **Sing-along lyrics.** Tap the album art for a full lyrics view in the style of the Music
-  Assistant player: the current line is highlighted and stays centred on screen while the rest
-  of the song scrolls past it and fades away, with the background tinted from the album art.
-  Lyrics come from LRCLIB (free, no account needed); tracks without lyrics simply say so.
-- **Two Home Assistant switches per Portal** — "Music Speaker" (the DLNA renderer) and
-  "Now Playing Screen" (this overlay), so each Portal can be turned on or off independently.
-- **Next/previous** ask Music Assistant to skip, since a DLNA speaker doesn't own the queue.
+  Assistant player: the current line stays fixed in the middle of the screen while the song
+  scrolls up past it and fades away, over a backdrop in the album's own colours. Lyrics come
+  from LRCLIB (free, no account needed); tracks without lyrics simply say so, and instrumental
+  stretches show a row of notes.
+- **A Music settings screen**, holding both speaker options and the now-playing screen, plus a
+  new option to stop the music when you close that screen (off by default — normally closing it
+  just puts it away).
+- **Sendspin (experimental): the Portal as a synchronised speaker.** A second way to be a
+  speaker for Music Assistant, alongside DLNA, using the Open Home Foundation's Sendspin
+  protocol. Unlike DLNA it's built for playing in step with other speakers, and it sends the
+  track details and artwork straight to the Portal. **Off by default** — turn on "Synced
+  speaker" in Settings → Music, or the matching Home Assistant switch. Needs Music Assistant
+  2.8 or newer. Multi-room grouping itself is untested so far; that's the next thing to look at.
+- **Home Assistant switches per Portal** for each of the above, so every Portal can be set up
+  independently.
 
 **Fixed**
+- **Incoming calls could ring but not be answered.** The app only recognised a call once it was
+  *connected*, so while it was ringing the screen stayed covered and the Answer button couldn't
+  be reached — the call then timed out as missed. Calls also arrived as a small
+  picture-in-picture tile instead of full screen. Both fixed.
 - **The screen now follows the queue.** Music Assistant's "flow mode" sends a whole queue as one
-  continuous stream, so the speaker itself is never told when a track changes — the screen used
-  to stay stuck on whichever track was playing when the stream began. Track details now come
-  from Music Assistant via Home Assistant, so they stay correct either way.
+  continuous stream, so a DLNA speaker is never told when the track changes — the screen used
+  to stay stuck on whichever track was playing when the stream began.
+- **Music gets out of the way properly.** It now goes quiet for an Alexa turn, an intercom
+  announcement or a call, and comes back afterwards. Intercom announcements used to make music
+  *louder* rather than quieter.
+- **Things stay in the right order on screen** — Alexa's listening bar and the intercom talk
+  buttons stay on top of the now-playing screen, which in turn stays above the screensaver. The
+  screensaver no longer disappears for an Alexa turn and then reappears over the music.
 - Album art now refreshes on every track change.
-- Event notifications to controllers (GENA) never actually sent, so controllers were never told
-  when playback state changed.
+- Event notifications to controllers (GENA) were never actually sent, so controllers were never
+  told when playback state changed.
 - Gapless queue playback (`SetNextAVTransportURI`) is now supported.
 
 ## v1.20.5 — The Portal is now a speaker (Music Assistant / DLNA)
