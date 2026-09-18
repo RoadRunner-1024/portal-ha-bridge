@@ -906,6 +906,12 @@ class BridgeService : Service() {
                 receiveOrb = ro
                 it.onReceiveStart = {
                     ScreenControl.wake(this); lastActivityMs = System.currentTimeMillis()
+                    // An announcement plays on STREAM_MUSIC and boosts that stream to the
+                    // configured intercom level — which drags our music UP with it, since it's on
+                    // the same stream. Mute the music for the announcement (and pause DLNA, which
+                    // is standalone so has nothing to stay in step with).
+                    sendspinPlayer?.muteForSystem(true)
+                    dlnaRenderer?.pauseForSystem()
                     if (twoWayChannelOpen) { twoWayOrb?.setLive(true); lastTwoWayActivityMs = System.currentTimeMillis() }
                     else { ro.show(); ro.setLive(true) }
                 }
@@ -913,7 +919,11 @@ class BridgeService : Service() {
                     if (twoWayChannelOpen) { twoWayOrb?.setLevel(lvl); lastTwoWayActivityMs = System.currentTimeMillis() }
                     else ro.setLevel(lvl)
                 }
-                it.onReceiveEnd = { if (!twoWayChannelOpen) ro.hide() }
+                it.onReceiveEnd = {
+                    sendspinPlayer?.muteForSystem(false)
+                    dlnaRenderer?.resumeAfterSystem()
+                    if (!twoWayChannelOpen) ro.hide()
+                }
                 it.onTwoWayChannel = { open, _ -> onTwoWayChannelChanged(open) }
                 it.suppressPlayback = { inCall }   // never talk over a live Meta call
             }
