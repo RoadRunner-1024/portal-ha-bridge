@@ -32,6 +32,7 @@ class SendspinAudioPlayer(
     @Volatile private var running = false
     @Volatile private var dropped = 0L
     @Volatile private var gain = 1f
+    @Volatile private var systemMuted = false
     @Volatile private var written = 0L
 
     override val isPlaying: Boolean get() = running
@@ -90,7 +91,7 @@ class SendspinAudioPlayer(
             .setBufferSizeInBytes(minBuf * 2)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
-            .also { it.setVolume(gain) }
+            .also { it.setVolume(if (systemMuted) 0f else gain) }   // a rebuild must not un-mute us
         Log.i(TAG, "sendspin: audio configured ${format.sampleRate}Hz " +
             "${format.channels}ch ${format.bitDepth}bit buf=${minBuf * 2}B resume=$wasRunning")
         if (wasRunning) start()
@@ -128,7 +129,25 @@ class SendspinAudioPlayer(
 
     override fun setVolume(gain: Float) {
         this.gain = gain.coerceIn(0f, 1f)
-        runCatching { track?.setVolume(this.gain) }
+        applyGain()
+    }
+
+    /**
+     * Silence for a call / Alexa turn / the intercom — but keep consuming the stream.
+     *
+     * Deliberately NOT a pause: this is a synchronised group stream, so stopping would put us
+     * out of step with the other rooms and we'd have to catch up afterwards. Muting keeps our
+     * place in the timeline, so when the turn ends we're exactly where everyone else is.
+     */
+    fun muteForSystem(muted: Boolean) {
+        if (systemMuted == muted) return
+        systemMuted = muted
+        Log.i(TAG, "sendspin: ${if (muted) "muted" else "unmuted"} for system audio")
+        applyGain()
+    }
+
+    private fun applyGain() {
+        runCatching { track?.setVolume(if (systemMuted) 0f else gain) }
     }
 
     private fun feedLoop() {

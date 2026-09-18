@@ -1,6 +1,9 @@
 package com.aeonos.portalha
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.util.Log
 import com.sendspin.protocol.AudioFormat
@@ -56,6 +59,23 @@ class SendspinPlayer(
     private var multicastLock: WifiManager.MulticastLock? = null
     private var connectJob: Job? = null
     private var idleJob: Job? = null
+    @Volatile private var audioPlayer: SendspinAudioPlayer? = null
+    private var focusRequest: AudioFocusRequest? = null
+
+    /**
+     * Silence playback while a call / Alexa turn / the intercom needs the speaker, without
+     * dropping our place in the group stream. See SendspinAudioPlayer.muteForSystem.
+     */
+    fun muteForSystem(muted: Boolean) { audioPlayer?.muteForSystem(muted) }
+
+    // Anything that grabs focus properly (a phone call, another media app) mutes us too — the
+    // BridgeService hooks only cover the things that DON'T take focus, like the intercom.
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> muteForSystem(false)
+            else -> muteForSystem(true)
+        }
+    }
 
     // Running view of the track, since server/state only sends what changed.
     @Volatile private var curTitle = ""
@@ -164,9 +184,24 @@ class SendspinPlayer(
             manufacturer = "Meta",
             productName = "Portal HA Bridge",
             softwareVersion = BuildConfig.VERSION_NAME,
-            audioPlayerFactory = { buffer, clock -> SendspinAudioPlayer(buffer, clock) },
+            audioPlayerFactory = { buffer, clock ->
+                SendspinAudioPlayer(buffer, clock).also { audioPlayer = it }
+            },
         )
         client = c
+
+        // Announce ourselves as media playback so the system ducks/notifies us appropriately.
+        val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build())
+            .setOnAudioFocusChangeListener(focusListener)
+            .setWillPauseWhenDucked(false)
+            .build()
+            .also { runCatching { audio.requestAudioFocus(it) } }
 
         // Follow the first server we find and keep following whichever is current.
         connectJob = s.launch {
@@ -229,6 +264,12 @@ class SendspinPlayer(
     fun stop() {
         connectJob?.cancel(); connectJob = null
         idleJob?.cancel(); idleJob = null
+        focusRequest?.let { req ->
+            val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            runCatching { audio.abandonAudioFocusRequest(req) }
+        }
+        focusRequest = null
+        audioPlayer = null
         runCatching { client?.disconnect("shutting_down") }
         client = null
         scope?.cancel(); scope = null

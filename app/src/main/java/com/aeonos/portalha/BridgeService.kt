@@ -2982,6 +2982,9 @@ class BridgeService : Service() {
         // Pause any DLNA music so the assistant is heard. Audio focus usually does this on its
         // own once the assistant grabs it, but not every wake path takes focus — so be explicit.
         dlnaRenderer?.pauseForSystem()
+        // Sendspin is muted rather than paused: it's a synchronised group stream, so stopping
+        // would leave this Portal out of step with the other rooms afterwards.
+        sendspinPlayer?.muteForSystem(true)
         Log.i(TAG, "wake: yielded mic to assistant")
 
         val am = getSystemService(AudioManager::class.java)
@@ -3325,6 +3328,7 @@ class BridgeService : Service() {
         wakeHandler.removeCallbacks(reclaimDebounce)
         // The assistant turn is over — resume DLNA music if we paused it for the turn.
         dlnaRenderer?.resumeAfterSystem()
+        sendspinPlayer?.muteForSystem(false)
         wakeRecordingCallback?.let { cb ->
             runCatching { getSystemService(AudioManager::class.java)?.unregisterAudioRecordingCallback(cb) }
             wakeRecordingCallback = null
