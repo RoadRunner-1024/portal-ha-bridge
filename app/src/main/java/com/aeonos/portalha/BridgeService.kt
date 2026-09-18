@@ -1440,7 +1440,7 @@ class BridgeService : Service() {
         val overlayOn = prefs?.nowPlayingOverlayEnabled == true
         // Don't climb back over the Alexa bar / intercom orb mid-turn; reclaim re-shows us.
         if (systemAudioActive) { sendspinDriving = t != null; return }
-        if (t == null || !overlayOn || inCall) {
+        if (t == null || !overlayOn || inCall || ringing) {
             if (ssTrackKey.isNotEmpty()) { nowPlayingOverlay?.hide(); ssTrackKey = "" }
             sendspinDriving = t != null
             return
@@ -1527,7 +1527,7 @@ class BridgeService : Service() {
         }
 
         val overlayOn = prefs?.nowPlayingOverlayEnabled == true
-        if (!overlayOn || inCall) {                 // deliberate: switch off / call → hide at once
+        if (!overlayOn || inCall || ringing) {      // deliberate: switch off / call → hide at once
             if (maTrackKey.isNotEmpty()) {
                 Log.i("PortalHA", "dlna: overlay hide (overlayOn=$overlayOn inCall=$inCall)")
                 nowPlayingOverlay?.hide(); maTrackKey = ""
@@ -1574,8 +1574,8 @@ class BridgeService : Service() {
         if (maDriving) return        // HA/MA polling owns the overlay — its track info is correct
         val overlayOn = prefs?.nowPlayingOverlayEnabled == true
         val active = (state == "PLAYING" || state == "PAUSED_PLAYBACK" || state == "TRANSITIONING") && np != null
-        if (!overlayOn || !active || inCall) {
-            if (state == "STOPPED" || state == "NO_MEDIA_PRESENT" || !overlayOn || inCall)
+        if (!overlayOn || !active || inCall || ringing) {
+            if (state == "STOPPED" || state == "NO_MEDIA_PRESENT" || !overlayOn || inCall || ringing)
                 nowPlayingOverlay?.hide()
             if (state == "STOPPED" || state == "NO_MEDIA_PRESENT") dlnaTrackKey = ""
             return
@@ -3153,14 +3153,28 @@ class BridgeService : Service() {
     // warm-up guards: a foreground grab during a call floats the call into
     // picture-in-picture (harmless but rude), and the call owns the mic anyway.
     @Volatile private var inCall = false
+    @Volatile private var ringing = false
     private var callWatchCallback: AudioManager.AudioPlaybackCallback? = null
 
-    private fun computeInCall(): Boolean {
+    private fun computeInCall(): Boolean = anyPlaybackUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+
+    /**
+     * A call that is RINGING, not yet answered.
+     *
+     * ★This matters on its own: computeInCall only sees a CONNECTED call (voice-communication
+     * audio), but a ringing one plays a ringtone. Our overlays sit above every app window, so
+     * while they were up the incoming-call UI couldn't be reached — and the only thing that
+     * would have moved them was the call connecting, which needs the Answer button. Calls were
+     * ringing and then being logged as missed with the caller hanging up.
+     */
+    private fun computeRinging(): Boolean = anyPlaybackUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+
+    private fun anyPlaybackUsage(usage: Int): Boolean {
         val am = getSystemService(AudioManager::class.java) ?: return false
         val configs = runCatching { am.activePlaybackConfigurations }.getOrDefault(emptyList())
         val myUid = android.os.Process.myUid()
         return configs.any { cfg ->
-            cfg.audioAttributes.usage == AudioAttributes.USAGE_VOICE_COMMUNICATION &&
+            cfg.audioAttributes.usage == usage &&
                 (playbackClientUidMethod?.let { m ->
                     runCatching { m.invoke(cfg) as? Int }.getOrNull()
                 } ?: -1) != myUid
@@ -3180,6 +3194,17 @@ class BridgeService : Service() {
     }
 
     private fun onCallStateMaybeChanged() {
+        // Get out of the way the moment it starts RINGING — see computeRinging. Nothing is
+        // published for this; it only clears the screen so Answer is reachable.
+        val ringingNow = computeRinging()
+        if (ringingNow != ringing) {
+            ringing = ringingNow
+            Log.i(TAG, "call: ${if (ringingNow) "RINGING — clearing the screen" else "ringing stopped"}")
+            if (ringingNow) {
+                nowPlayingOverlay?.hide()
+                runCatching { screensaver.hide() }
+            }
+        }
         val now = computeInCall()
         if (now == inCall) return
         inCall = now
@@ -3685,7 +3710,7 @@ class BridgeService : Service() {
         val musicUp = nowPlayingOverlay?.isShowing == true
         val assistantTurn = micYieldedForWake || falconPlaying()
         val keepForMusic = musicUp && assistantTurn
-        val busy = inCall || dialServer?.appRunning == true || (assistantTurn && !keepForMusic)
+        val busy = inCall || ringing || dialServer?.appRunning == true || (assistantTurn && !keepForMusic)
         if (!screenOn || busy || (!dashboardForeground && !keepForMusic)) {
             if (screensaver.isShowing) {
                 Log.i(TAG, "screensaver: hiding (screenOn=$screenOn busy=$busy " +
