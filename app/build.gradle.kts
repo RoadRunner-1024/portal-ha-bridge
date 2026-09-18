@@ -22,8 +22,8 @@ android {
         // 28 = Android 9 (Portal+); 29 = Android 10 (Portal / Portal Mini).
         minSdk = 28
         targetSdk = 35
-        versionCode = 48
-        versionName = "1.21.0"
+        versionCode = 49
+        versionName = "1.21.1"
 
         // Portals are ARM — ship only ARM native libs (Vosk/RootEncoder bundle x86 +
         // x86_64 + mips for emulators, ~20 MB of dead weight on real hardware).

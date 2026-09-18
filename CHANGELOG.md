@@ -4,6 +4,16 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.21.1 — Music and calls get along
+
+**Fixed**
+- **The music comes back after a call.** If a call rings and isn't answered, the music is only
+  quietened for the ring and returns — along with the now-playing screen — once it stops. It used
+  to stay silent while Music Assistant carried on playing, with the screen gone until the next
+  song.
+- **Answering a call now stops the music**, on the Portal and on that speaker in Music Assistant,
+  rather than leaving it half-suspended. Taking a call means you're done listening.
+
 ## v1.21.0 — A now-playing screen with sing-along lyrics, and a second way to be a speaker
 
 **Added**
