@@ -1328,6 +1328,20 @@ class BridgeService : Service() {
             onSetVolume = { pct ->
                 if (sendspinDriving) sendspinPlayer?.setVolume(pct) else dlnaRenderer?.setVolumeFromUi(pct)
             },
+            // Scrubbing the progress bar. Re-anchor the position clock straight away so the lyric
+            // highlight lands on the new spot instead of drifting back until the server catches up.
+            onSeek = { ms ->
+                when {
+                    sendspinDriving -> {
+                        sendspinPlayer?.seekTo(ms)
+                        ssPosBaseMs = ms; ssPosBaseAt = SystemClock.elapsedRealtime()
+                    }
+                    maDriving -> {
+                        MaControl.seek(this, ms)
+                        maPosBaseMs = ms; maPosBaseAt = SystemClock.elapsedRealtime()
+                    }
+                }
+            },
             onClose = { nowPlayingOverlay?.hide() },
             positionProvider = {
                 when {

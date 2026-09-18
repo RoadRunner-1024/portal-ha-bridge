@@ -58,6 +58,7 @@ class NowPlayingOverlay(
     private val onPlayPause: () -> Unit,
     private val onStop: () -> Unit,
     private val onSetVolume: (Int) -> Unit,
+    private val onSeek: (Int) -> Unit,
     private val onClose: () -> Unit,
     private val positionProvider: () -> Int,
     private val durationProvider: () -> Int = { 0 },
@@ -80,9 +81,9 @@ class NowPlayingOverlay(
     private var stopIcon: MediaIcon? = null
     private var volIcon: MediaIcon? = null
     private var volBar: SeekBar? = null
-    private var lyricsScroll: ScrollView? = null
+    private var lyricsClip: FrameLayout? = null
     private var lyricsView: TextView? = null
-    private var progress: ProgressBar? = null
+    private var progress: SeekBar? = null
     private var progressRow: View? = null
     private var elapsedView: TextView? = null
     private var totalView: TextView? = null
@@ -92,10 +93,16 @@ class NowPlayingOverlay(
     private var plain: String? = null
     private var lastArtUri = ""
     private var highlightedLine = -1
-    private var seeking = false
+    private var seeking = false          // volume slider held
+    private var scrubbing = false        // progress thumb held
+    private var scrubDurationMs = 0
     private var lyricsMode = false
     private var lyricsGradient: IntArray? = null   // art-derived light gradient for the lyrics view
     private var artFromBytes = false               // artwork pushed to us, so there's no URL to reload
+    // Character offsets of each lyric within the rendered text. A lyric can wrap onto several
+    // display lines, so its layout line has to be looked up rather than worked out from its index.
+    private var lyricStart = IntArray(0)
+    private var lyricEnd = IntArray(0)
     private var scrollAnim: ObjectAnimator? = null
 
     private fun dp(v: Int) = (v * density).toInt()
@@ -231,26 +238,29 @@ class NowPlayingOverlay(
         leftCol!!.addView(artistView)
         content!!.addView(leftCol)
 
-        // A ScrollView, specifically: it measures its child with an UNSPECIFIED height, so the
-        // lyric block can be as tall as the whole song. A FrameLayout would measure a
-        // WRAP_CONTENT child AT_MOST the parent's height — one screenful — and everything past
-        // that simply wouldn't exist to scroll to.
+        // The lyric block slides behind a fixed window so the active line sits permanently on the
+        // vertical midpoint. Its height is measured and set explicitly in centerCurrentLine —
+        // WRAP_CONTENT here would be clamped by the parent to one screenful, and sliding it then
+        // runs the view clean off the top (which is exactly how the lyrics used to vanish).
         lyricsView = TextView(context).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 27f)
-            setTypeface(typeface, Typeface.BOLD)
+            // Deliberately NOT bold: the active line is the bold one, and it can only stand out
+            // if the rest aren't already at the same weight.
+            setTypeface(typeface, Typeface.NORMAL)
             gravity = Gravity.CENTER_HORIZONTAL
             setLineSpacing(dp(10).toFloat(), 1f)
             setPadding(dp(24), 0, dp(24), 0)
             text = ""
         }
-        lyricsScroll = ScrollView(context).apply {
+        lyricsClip = FrameLayout(context).apply {
             visibility = View.GONE
-            isVerticalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(lyricsView)
+            clipChildren = true
+            addView(lyricsView, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.35f)
         }
-        content!!.addView(lyricsScroll)
+        content!!.addView(lyricsClip)
 
         r.addView(content, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -291,10 +301,28 @@ class NowPlayingOverlay(
         }
         elapsedView = miniTime("0:00")
         totalView = miniTime("0:00")
-        progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+        // Draggable: scrubbing seeks the track, and the lyrics follow to the new position.
+        progress = SeekBar(context).apply {
             max = 1000
-            layoutParams = LinearLayout.LayoutParams(0, dp(3), 1f).also {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
                 it.leftMargin = dp(12); it.rightMargin = dp(12) }
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    // Live time readout under the thumb while dragging.
+                    if (fromUser) elapsedView?.text = fmt((p.toLong() * scrubDurationMs / 1000).toInt())
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) { scrubbing = true }
+                override fun onStopTrackingTouch(sb: SeekBar) {
+                    val dur = scrubDurationMs
+                    scrubbing = false
+                    if (dur <= 0) return
+                    val target = (sb.progress.toLong() * dur / 1000).toInt()
+                    // Move the highlight immediately rather than waiting for the server to
+                    // report the new position back to us.
+                    jumpLyricsTo(target)
+                    onSeek(target)
+                }
+            })
         }
         pRow.addView(elapsedView)
         pRow.addView(progress)
@@ -387,7 +415,7 @@ class NowPlayingOverlay(
 
         // Layout: art bottom-left (now-playing) vs top-left (lyrics); show/hide lyrics.
         leftCol?.gravity = (if (dark) Gravity.BOTTOM else Gravity.TOP) or Gravity.CENTER_HORIZONTAL
-        lyricsScroll?.visibility = if (dark) View.GONE else View.VISIBLE
+        lyricsClip?.visibility = if (dark) View.GONE else View.VISIBLE
 
         // Palette. In lyrics mode the backdrop is the album's colour, so contrast follows it:
         // light text on a rich/dark sleeve, dark text on a pale one.
@@ -410,6 +438,7 @@ class NowPlayingOverlay(
         setShadow(shadow, titleView, albumView, artistView, closeBtn, elapsedView, totalView)
 
         progress?.progressTintList = ctrlTint
+        progress?.thumbTintList = ctrlTint
         progress?.progressBackgroundTintList = trackTint
         volBar?.progressTintList = ctrlTint
         volBar?.thumbTintList = ctrlTint
@@ -518,7 +547,10 @@ class NowPlayingOverlay(
                 if (lines != null && lines.isNotEmpty()) {
                     var idx = -1
                     for (i in lines.indices) if (lines[i].atMs <= pos) idx = i else break
-                    if (idx != highlightedLine) { highlightedLine = idx; renderLyrics(idx) }
+                    if (idx != highlightedLine) {
+                    Log.i(TAG, "lyric line $idx/${lines.size} at ${pos}ms")
+                    highlightedLine = idx; renderLyrics(idx)
+                }
                 }
             }
             updateProgress(pos)
@@ -532,10 +564,22 @@ class NowPlayingOverlay(
         val dur = durationProvider()
         if (dur <= 0) { progressRow?.visibility = View.GONE; return }
         progressRow?.visibility = View.VISIBLE
+        scrubDurationMs = dur
+        totalView?.text = fmt(dur)
+        if (scrubbing) return          // the thumb belongs to the finger while it's down
         val p = pos.coerceIn(0, dur)
         progress?.progress = (p.toLong() * 1000 / dur).toInt()
         elapsedView?.text = fmt(p)
-        totalView?.text = fmt(dur)
+    }
+
+    /** Re-point the lyrics at [posMs] straight away, so a scrub lands where you dropped it. */
+    private fun jumpLyricsTo(posMs: Int) {
+        val lines = synced ?: return
+        var idx = -1
+        for (i in lines.indices) if (lines[i].atMs <= posMs) idx = i else break
+        if (idx == highlightedLine) return
+        highlightedLine = idx
+        renderLyrics(idx)
     }
 
     private fun fmt(ms: Int): String {
@@ -548,16 +592,22 @@ class NowPlayingOverlay(
         val lines = synced
         if (lines != null && lines.isNotEmpty()) {
             val sb = SpannableStringBuilder()
+            if (lyricStart.size != lines.size) {
+                lyricStart = IntArray(lines.size); lyricEnd = IntArray(lines.size)
+            }
             for (i in lines.indices) {
                 val start = sb.length
+                lyricStart[i] = start
                 // Timed lyrics routinely carry blank lines for instrumental stretches, and many
                 // tracks simply stop having words long before they end. A row of notes (as the MA
                 // player shows) reads as "instrumental" rather than "the lyrics broke".
-                sb.append(lines[i].text.ifBlank { "♪ ♪ ♪ ♪ ♪ ♪" }).append("\n\n")
+                sb.append(lines[i].text.ifBlank { "♪ ♪ ♪ ♪ ♪ ♪" })
+                lyricEnd[i] = (sb.length - 1).coerceAtLeast(start)   // last char OF the lyric
+                sb.append("\n\n")
                 if (i == current) {
                     val cur = if (!lyricsMode || bgIsDark()) Color.WHITE else 0xFF0A0A0C.toInt()
                     sb.setSpan(ForegroundColorSpan(cur), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    sb.setSpan(RelativeSizeSpan(1.12f), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    sb.setSpan(RelativeSizeSpan(1.18f), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 } else {
                     // Fade out with distance from the current line (like MA/Spotify).
@@ -581,19 +631,41 @@ class NowPlayingOverlay(
      */
     private fun centerCurrentLine(current: Int) {
         val lv = lyricsView ?: return
-        val scroll = lyricsScroll ?: return
-        scroll.post {
-            if (scroll.height == 0) return@post
-            val pad = scroll.height / 2
-            if (lv.paddingTop != pad) lv.setPadding(dp(24), pad, dp(24), pad)
+        val clip = lyricsClip ?: return
+        clip.post {
+            val vw = clip.width
+            val vh = clip.height
+            if (vw == 0 || vh == 0) return@post
+
+            // Measure the lyric block at its FULL height and pin that height on the view. Left as
+            // WRAP_CONTENT the parent would cap it at one screenful, and sliding it up would walk
+            // the whole view off the top — the "lyrics vanish mid-track" bug. With a real height
+            // there is nothing to clamp, and translationY is unbounded in both directions, so any
+            // line (first, last, or anywhere between) can sit exactly on the midpoint.
+            lv.measure(
+                View.MeasureSpec.makeMeasureSpec(vw, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            val fullH = lv.measuredHeight
+            if (lv.layoutParams.height != fullH && fullH > 0) {
+                lv.layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, fullH, Gravity.TOP)
+                lv.requestLayout()
+            }
+
             val layout = lv.layout ?: return@post
-            val lineNo = minOf(current.coerceAtLeast(0) * 2, layout.lineCount - 1)
-            val lineCenter = (layout.getLineTop(lineNo) + layout.getLineBottom(lineNo)) / 2 + pad
-            val maxScroll = (layout.height + pad * 2 - scroll.height).coerceAtLeast(0)
-            val target = (lineCenter - scroll.height / 2).coerceIn(0, maxScroll)
-            if (kotlin.math.abs(target - scroll.scrollY) < dp(2)) return@post
+            val idx = current.coerceAtLeast(0)
+            if (idx >= lyricStart.size) return@post
+            // Ask the layout where this lyric actually sits. A lyric can wrap onto several display
+            // lines, so its position CANNOT be derived from its index — doing that made the
+            // estimate fall progressively behind and walked the highlight off the bottom.
+            val firstLine = layout.getLineForOffset(lyricStart[idx])
+            val lastLine = layout.getLineForOffset(lyricEnd[idx])
+            val lineCentre =
+                (layout.getLineTop(firstLine) + layout.getLineBottom(lastLine)) / 2f + lv.paddingTop
+            val target = vh / 2f - lineCentre        // deliberately unclamped
+            if (kotlin.math.abs(target - lv.translationY) < 1f) return@post
             scrollAnim?.cancel()
-            scrollAnim = ObjectAnimator.ofInt(scroll, "scrollY", scroll.scrollY, target).apply {
+            scrollAnim = ObjectAnimator.ofFloat(lv, "translationY", lv.translationY, target).apply {
                 duration = 520
                 interpolator = DecelerateInterpolator()
                 start()
@@ -605,7 +677,8 @@ class NowPlayingOverlay(
      *  backdrop calls for. */
     private fun lyricFade(d: Int): Int {
         if (!lyricsMode) return 0x80FFFFFF.toInt()
-        val a = when (d) { 0, 1 -> 0x9E; 2 -> 0x70; 3 -> 0x50; 4 -> 0x3C; else -> 0x2C }
+        // Kept well back from the active line's solid ink so "which line is now" is unmistakable.
+        val a = when (d) { 0, 1 -> 0x70; 2 -> 0x52; 3 -> 0x3C; else -> 0x2A }
         return if (bgIsDark()) (a shl 24) or 0x00FFFFFF else (a shl 24)   // white vs black ink
     }
 

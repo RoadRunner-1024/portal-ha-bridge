@@ -95,6 +95,13 @@ class SendspinPlayer(
     fun next() = sendCommand("next", "next_track", "skip_next")
     fun previous() = sendCommand("previous", "previous_track", "skip_previous")
     fun stopPlayback() = sendCommand("stop", "pause")
+
+    /** Jump to [positionMs] within the current track (server advertises "seek"). */
+    fun seekTo(positionMs: Int) {
+        Log.i(TAG, "sendspin: seek to ${positionMs}ms")
+        runCatching { client?.sendSeek(positionMs.toLong()) }
+            .onFailure { Log.w(TAG, "sendspin: seek failed: ${it.message}") }
+    }
     fun playPause(currentlyPlaying: Boolean) =
         if (currentlyPlaying) sendCommand("pause", "play_pause") else sendCommand("play", "play_pause")
 

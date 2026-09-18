@@ -24,6 +24,21 @@ object MaControl {
     fun previous(ctx: Context) = skip(ctx, "media_previous_track")
     fun playPause(ctx: Context) = skip(ctx, "media_play_pause")
 
+    /** Seek within the current track (HA wants seek_position in seconds). */
+    fun seek(ctx: Context, positionMs: Int) {
+        thread(isDaemon = true) {
+            val p = Prefs(ctx)
+            val base = p.haUrl.trim().trimEnd('/')
+            val token = p.haToken
+            if (base.isEmpty() || token.isEmpty()) return@thread
+            val entity = (cachedEntity
+                ?: resolveEntity(base, token, p.deviceName)?.also { cachedEntity = it }) ?: return@thread
+            post("$base/api/services/media_player/media_seek", token,
+                JSONObject().put("entity_id", entity)
+                    .put("seek_position", positionMs / 1000.0).toString())
+        }
+    }
+
     /**
      * What Music Assistant says this Portal is playing. The DLNA renderer can't be trusted for
      * this: with MA's "flow mode" the whole queue arrives as ONE continuous stream, so the
