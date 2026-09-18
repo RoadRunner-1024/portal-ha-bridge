@@ -429,6 +429,9 @@ class BridgeService : Service() {
     @Volatile private var ssPosBaseAt = 0L
     @Volatile private var ssDurationMs = 0
     @Volatile private var ssProgressSeq = -1
+    @Volatile private var ssLastTrack: SendspinPlayer.Track? = null
+    // True while a call / Alexa turn / the intercom owns the speaker and the screen.
+    @Volatile private var systemAudioActive = false
     @Volatile private var dlnaTrackKey = ""     // "title|artist" of the track the overlay shows
     private var twoWay: TwoWayEngine? = null
     private var twoWayOrb: AnnounceOrbOverlay? = null
@@ -1402,7 +1405,10 @@ class BridgeService : Service() {
 
     /** Sendspin pushed new track details — drive the overlay straight off them. */
     private fun onSendspinTrack(t: SendspinPlayer.Track?) {
+        ssLastTrack = t
         val overlayOn = prefs?.nowPlayingOverlayEnabled == true
+        // Don't climb back over the Alexa bar / intercom orb mid-turn; reclaim re-shows us.
+        if (systemAudioActive) { sendspinDriving = t != null; return }
         if (t == null || !overlayOn || inCall) {
             if (ssTrackKey.isNotEmpty()) { nowPlayingOverlay?.hide(); ssTrackKey = "" }
             sendspinDriving = t != null
@@ -2985,6 +2991,10 @@ class BridgeService : Service() {
         // Sendspin is muted rather than paused: it's a synchronised group stream, so stopping
         // would leave this Portal out of step with the other rooms afterwards.
         sendspinPlayer?.muteForSystem(true)
+        // The now-playing screen is a full-screen overlay and sits ON TOP of the Alexa listening
+        // bar and the intercom orb, so it has to get out of the way for the turn.
+        systemAudioActive = true
+        nowPlayingOverlay?.hide()
         Log.i(TAG, "wake: yielded mic to assistant")
 
         val am = getSystemService(AudioManager::class.java)
@@ -3329,6 +3339,9 @@ class BridgeService : Service() {
         // The assistant turn is over — resume DLNA music if we paused it for the turn.
         dlnaRenderer?.resumeAfterSystem()
         sendspinPlayer?.muteForSystem(false)
+        // Turn's over — put the now-playing screen back if something is still playing.
+        systemAudioActive = false
+        ssLastTrack?.let { t -> ssTrackKey = ""; onSendspinTrack(t) }
         wakeRecordingCallback?.let { cb ->
             runCatching { getSystemService(AudioManager::class.java)?.unregisterAudioRecordingCallback(cb) }
             wakeRecordingCallback = null

@@ -68,12 +68,16 @@ class SendspinPlayer(
      */
     fun muteForSystem(muted: Boolean) { audioPlayer?.muteForSystem(muted) }
 
-    // Anything that grabs focus properly (a phone call, another media app) mutes us too — the
-    // BridgeService hooks only cover the things that DON'T take focus, like the intercom.
+    // A phone call or another media app takes focus transiently and hands it back, so those are
+    // safe to follow. A PERMANENT loss is not: Android never sends a matching GAIN afterwards, so
+    // muting on it strands us silent forever — which is exactly what happened when falcon took
+    // focus for an Alexa turn. BridgeService's explicit yield/reclaim hooks own that case.
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
             AudioManager.AUDIOFOCUS_GAIN -> muteForSystem(false)
-            else -> muteForSystem(true)
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> muteForSystem(true)
+            else -> Log.i(TAG, "sendspin: permanent focus loss — leaving mute to the wake hooks")
         }
     }
 
