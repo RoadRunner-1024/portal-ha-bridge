@@ -1768,7 +1768,10 @@ class BridgeService : Service() {
                     Log.i(TAG, "screensaver: url set to '$it' (enabled)")
                 }
                 when (intent.getStringExtra("action")) {
-                    "show" -> screensaver.show(p.screensaverUrl) { exitScreensaver() }
+                    "show" -> {
+                        screensaver.show(p.screensaverUrl) { exitScreensaver() }
+                        nowPlayingOverlay?.bringToFront(); raiseTalkButtons()
+                    }
                     "hide" -> exitScreensaver()
                 }
             }
@@ -3691,8 +3694,10 @@ class BridgeService : Service() {
         if (p.screensaverPresenceOnly && p.presenceEnabled && lastPublishedPresence != true) return
         if (System.currentTimeMillis() - lastInteractionMs < p.screensaverIdleSecs * 1000L) return
         screensaver.show(p.screensaverUrl) { exitScreensaver() }
-        // Photos were just added, so they're on top — put the now-playing screen back above them.
+        // Photos were just added, so they're on top — rebuild the stack above them, bottom-up:
+        // now playing, then the talk buttons, which must never end up buried.
         nowPlayingOverlay?.bringToFront()
+        raiseTalkButtons()
     }
 
     /** Centre tap: drop the photos and restart both countdowns so it doesn't reappear at once. */
