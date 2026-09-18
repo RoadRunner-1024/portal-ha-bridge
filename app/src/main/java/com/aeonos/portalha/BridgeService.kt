@@ -1431,7 +1431,9 @@ class BridgeService : Service() {
     private fun stopSendspin() {
         sendspinPlayer?.stop(); sendspinPlayer = null
         sendspinDriving = false; ssTrackKey = ""
-        nowPlayingOverlay?.hide()
+        // The overlay is shared with the DLNA speaker — only tear it down if nothing else wants it.
+        if (dlnaRenderer == null) { nowPlayingOverlay?.hide(); nowPlayingOverlay = null }
+        else nowPlayingOverlay?.hide()
     }
 
     /** Sendspin pushed new track details — drive the overlay straight off them. */
@@ -1482,8 +1484,13 @@ class BridgeService : Service() {
     private fun stopDlna() {
         maPollRunning = false; maDriving = false; maTrackKey = ""
         dlnaRenderer?.stop(); dlnaRenderer = null
-        nowPlayingOverlay?.hide(); nowPlayingOverlay = null
         dlnaTrackKey = ""
+        // ★The overlay is SHARED with the Sendspin player. Nulling it here regardless meant that
+        // switching the DLNA speaker off destroyed the object Sendspin shows through, and every
+        // later show() became a silent no-op on a null — music with no now-playing screen, until
+        // the app happened to restart.
+        if (sendspinPlayer == null) { nowPlayingOverlay?.hide(); nowPlayingOverlay = null }
+        else nowPlayingOverlay?.hide()
     }
 
     // ── Music Assistant state poller ────────────────────────────────────────────

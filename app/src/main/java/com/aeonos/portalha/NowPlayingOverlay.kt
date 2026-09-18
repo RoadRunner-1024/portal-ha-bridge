@@ -111,7 +111,10 @@ class NowPlayingOverlay(
     val isShowing: Boolean get() = root != null
 
     fun show(title: String, artist: String, album: String, artUri: String, playing: Boolean, volumePct: Int) {
-        if (!Settings.canDrawOverlays(context)) return
+        if (!Settings.canDrawOverlays(context)) {
+            Log.w(TAG, "no overlay permission — can't show the now-playing screen")
+            return
+        }
         main.post {
             if (root == null) build()
             lastArtUri = ""            // new track → always re-fetch art, even if the URL looks unchanged
@@ -299,6 +302,8 @@ class NowPlayingOverlay(
             PixelFormat.TRANSLUCENT)
         rootLp = lp
         runCatching { wm.addView(r, lp); root = r }
+            .onFailure { Log.w(TAG, "overlay addView FAILED — no now-playing screen", it) }
+            .onSuccess { Log.i(TAG, "overlay added (${screenW}x${screenH}, art=$bigArt)") }
         applyMode()
     }
 
