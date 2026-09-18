@@ -1601,7 +1601,10 @@ class BridgeService : Service() {
     // SYSTEM_ALERT_WINDOW permission exempts this from background-start limits.
     // DashboardActivity is singleTask, so this reuses the existing instance.
     private fun reclaimForeground() {
-        if (inCall) return   // never shove the dashboard over a live call (it would PiP it)
+        // Never shove the dashboard over a call — it would PiP it. Ringing counts: pushing the
+        // dashboard forward while the phone is ringing is what shrank the incoming-call UI into
+        // a picture-in-picture tile instead of leaving it full screen.
+        if (inCall || ringing) return
         // Nor over an app the user deliberately opened: waking the screen is not a request to
         // abandon whatever they were watching.
         if (userLeftDashboard) return
@@ -3239,6 +3242,11 @@ class BridgeService : Service() {
     }
 
     private fun bringDashboardToFront() {
+        // ★Never during a call, RINGING included. Pushing the dashboard forward demotes the
+        // incoming-call UI to picture-in-picture — you get a little tile to tap instead of the
+        // full-screen answer/reject. Guarded here rather than at the call sites because there
+        // are eight of them and any one firing mid-ring causes it.
+        if (inCall || ringing) return
         // Works on A9 too: falcon self-foregrounds a story/music card there, and without an
         // explicit return the end of the turn strands the user on the Meta launcher (plus a
         // long black transition) instead of the dashboard. A no-op when we're already front.
