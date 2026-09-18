@@ -1476,6 +1476,12 @@ class BridgeService : Service() {
                     else "${lines.size} lines, last at ${lines.last().atMs}ms of ${t.durationMs}ms")
                 if (ssTrackKey == key) nowPlayingOverlay?.setLyrics(res)
             }
+        } else if (nowPlayingOverlay?.isShowing != true) {
+            // ★Same track, but the window is gone — hidden for a call, say. update() only writes
+            // into views that no longer exist, and show() is otherwise reached only on a track
+            // CHANGE, so without this the screen never came back after a call: the music resumed
+            // and the now-playing screen stayed dead until the next song.
+            nowPlayingOverlay?.show(t.title, t.artist, t.album, "", t.playing, 50)
         } else {
             nowPlayingOverlay?.update(t.title, t.artist, t.album, "", t.playing)
         }
@@ -1570,6 +1576,11 @@ class BridgeService : Service() {
                 val res = Lyrics.fetch(s.artist, s.title, s.album, s.durationMs / 1000)
                 if (maTrackKey == key) nowPlayingOverlay?.setLyrics(res)
             }
+        } else if (nowPlayingOverlay?.isShowing != true) {
+            // Same track but the window is gone (hidden for a call) — update() would write into
+            // views that no longer exist; only show() rebuilds it. See onSendspinTrack.
+            nowPlayingOverlay?.show(s.title, s.artist, s.album, s.artUrl, s.playing,
+                dlnaRenderer?.volumePct() ?: 50)
         } else {
             nowPlayingOverlay?.update(s.title, s.artist, s.album, s.artUrl, s.playing)
         }
@@ -1600,6 +1611,9 @@ class BridgeService : Service() {
                 val res = Lyrics.fetch(np.artist, np.title, np.album, np.durationSec)
                 if (dlnaTrackKey == key) nowPlayingOverlay?.setLyrics(res)   // still the same track
             }
+        } else if (nowPlayingOverlay?.isShowing != true) {
+            nowPlayingOverlay?.show(np.title, np.artist, np.album, np.artUri, playing,
+                dlnaRenderer?.volumePct() ?: 50)
         } else {
             nowPlayingOverlay?.update(np.title, np.artist, np.album, np.artUri, playing)
         }
