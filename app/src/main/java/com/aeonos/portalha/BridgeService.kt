@@ -3208,6 +3208,15 @@ class BridgeService : Service() {
      */
     private fun showWakeCover(onCovered: Runnable) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || wakeCoverView != null) { onCovered.run(); return }
+        // ★Nothing to cover when the photo frame is already up. The cover hides falcon's activity
+        // being brought to the front, but an activity is an APP window and our overlays sit above
+        // every one of those — the screensaver is already hiding it. Putting the cover up anyway
+        // blacks out the photos AND the now-playing screen a moment before the listening bar
+        // appears, which is exactly the "everything vanishes" flicker.
+        if (screensaver.isShowing) {
+            Log.i(TAG, "wake: cover skipped — screensaver already covers the app windows")
+            onCovered.run(); return
+        }
         wakeCoverStyle = prefs?.wakeCoverStyle ?: "whoosh"
         val once = java.util.concurrent.atomic.AtomicBoolean(false)
         val fire = Runnable { if (once.compareAndSet(false, true)) onCovered.run() }
@@ -3633,12 +3642,20 @@ class BridgeService : Service() {
         // ★An assistant turn only had to tear the photos down because they'd cover her UI. With
         // music playing that's no longer true — the listening bar is added after these overlays so
         // it lands on top regardless — and tearing down meant the screensaver vanished mid-track
-        // and then came BACK on top of the now-playing screen. Leave it up in that case.
+        // and then came BACK on top of the now-playing screen.
+        // NB it has to be exempted from BOTH tests: falcon's activity is brought to the front for
+        // a turn, which fires setDashboardForeground(false), so !dashboardForeground takes the
+        // photos down on its own even when the turn isn't counted as busy.
         val musicUp = nowPlayingOverlay?.isShowing == true
-        val assistantBusy = !musicUp && (micYieldedForWake || falconPlaying())
-        val busy = inCall || dialServer?.appRunning == true || assistantBusy
-        if (!screenOn || busy || !dashboardForeground) {
-            if (screensaver.isShowing) screensaver.hide()
+        val assistantTurn = micYieldedForWake || falconPlaying()
+        val keepForMusic = musicUp && assistantTurn
+        val busy = inCall || dialServer?.appRunning == true || (assistantTurn && !keepForMusic)
+        if (!screenOn || busy || (!dashboardForeground && !keepForMusic)) {
+            if (screensaver.isShowing) {
+                Log.i(TAG, "screensaver: hiding (screenOn=$screenOn busy=$busy " +
+                    "fg=$dashboardForeground musicUp=$musicUp turn=$assistantTurn)")
+                screensaver.hide()
+            }
             return
         }
         if (screensaver.isShowing) return
