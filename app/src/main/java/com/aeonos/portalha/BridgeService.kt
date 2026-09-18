@@ -3164,6 +3164,8 @@ class BridgeService : Service() {
     // picture-in-picture (harmless but rude), and the call owns the mic anyway.
     @Volatile private var inCall = false
     @Volatile private var ringing = false
+    /** A call (ringing or connected) has the screen; cleared once for the restore. */
+    @Volatile private var callOwnsScreen = false
     private var callWatchCallback: AudioManager.AudioPlaybackCallback? = null
 
     private fun computeInCall(): Boolean = anyPlaybackUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -3207,20 +3209,29 @@ class BridgeService : Service() {
         // Get out of the way the moment it starts RINGING — see computeRinging. Nothing is
         // published for this; it only clears the screen so Answer is reachable.
         val ringingNow = computeRinging()
+        val now = computeInCall()
         if (ringingNow != ringing) {
             ringing = ringingNow
             Log.i(TAG, "call: ${if (ringingNow) "RINGING — clearing the screen" else "ringing stopped"}")
-            if (ringingNow) {
+        }
+        // ★One latch for "a call owns the screen", covering ringing AND connected, rather than
+        // clearing on one transition and restoring on another. Split across the two edges it was
+        // racy: a call answered just as the ringtone stopped satisfied NEITHER branch — the
+        // ringing edge saw a connected call and skipped, then the inCall check found no
+        // transition and returned — leaving the music muted with no now-playing screen.
+        if (ringingNow || now) {
+            if (!callOwnsScreen) {
+                callOwnsScreen = true
                 nowPlayingOverlay?.hide()
                 runCatching { screensaver.hide() }
-            } else if (!computeInCall()) {
-                // Rang but was never answered (declined/missed), so the inCall transition below
-                // never fires and its recovery never runs — restore from here instead.
-                sendspinPlayer?.muteForSystem(false)
-                ssLastTrack?.let { onSendspinTrack(it) }
             }
+        } else if (callOwnsScreen) {
+            callOwnsScreen = false
+            Log.i(TAG, "call: over — restoring music and the now-playing screen")
+            sendspinPlayer?.muteForSystem(false)
+            dlnaRenderer?.resumeAfterSystem()
+            ssLastTrack?.let { onSendspinTrack(it) }
         }
-        val now = computeInCall()
         if (now == inCall) return
         inCall = now
         Log.i(TAG, "call: ${if (now) "IN CALL" else "call ended"}")
@@ -3238,17 +3249,6 @@ class BridgeService : Service() {
             if (!coexist && !micYieldedForWake && soundMonitor?.isRunning() == false) {
                 soundMonitor?.start()
                 Log.i(TAG, "call: restarted warm mic after call end")
-            }
-            // ★Bring the music back. A call does NOT go through yieldMicForWake/reclaimMicAfterWake
-            // — those are the wake/Alexa path — so nothing here un-muted Sendspin or put the
-            // now-playing screen back, and the music stayed silent while MA carried on playing.
-            // Sendspin is also only guaranteed an un-mute via AUDIOFOCUS_GAIN, which never arrives
-            // if the call took focus permanently.
-            sendspinPlayer?.muteForSystem(false)
-            dlnaRenderer?.resumeAfterSystem()
-            ssLastTrack?.let { t ->
-                Log.i(TAG, "call: restoring the now-playing screen after call end")
-                onSendspinTrack(t)
             }
         }
     }
