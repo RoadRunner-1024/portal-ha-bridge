@@ -3180,6 +3180,8 @@ class BridgeService : Service() {
     @Volatile private var ringing = false
     /** A call (ringing or connected) has the screen; cleared once for the restore. */
     @Volatile private var callOwnsScreen = false
+    /** The call was answered, so playback was stopped outright and must not be restored. */
+    @Volatile private var callStoppedPlayback = false
     private var callWatchCallback: AudioManager.AudioPlaybackCallback? = null
 
     private fun computeInCall(): Boolean = anyPlaybackUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -3239,12 +3241,30 @@ class BridgeService : Service() {
                 nowPlayingOverlay?.hide()
                 runCatching { screensaver.hide() }
             }
+            // ★Answering ends the music for good, rather than trying to pick it back up: taking a
+            // call means you're done listening, and stopping the speaker in MA is both what you'd
+            // want and far simpler than restoring mid-stream state afterwards. `inCall` still
+            // holds its previous value here, so this fires once, on the answer.
+            if (now && !inCall && !callStoppedPlayback) {
+                callStoppedPlayback = true
+                Log.i(TAG, "call: answered — stopping playback on this speaker")
+                sendspinPlayer?.stopPlayback()
+                dlnaRenderer?.stopFromUi()
+            }
         } else if (callOwnsScreen) {
             callOwnsScreen = false
-            Log.i(TAG, "call: over — restoring music and the now-playing screen")
+            // Un-mute regardless, or whatever plays next is silent.
             sendspinPlayer?.muteForSystem(false)
-            dlnaRenderer?.resumeAfterSystem()
-            ssLastTrack?.let { onSendspinTrack(it) }
+            if (callStoppedPlayback) {
+                callStoppedPlayback = false
+                ssTrackKey = ""     // nothing playing; the next track shows a fresh screen
+                Log.i(TAG, "call: ended — playback was stopped for the call, leaving it stopped")
+            } else {
+                // Rang but was never answered, so the music is only muted — put it back.
+                Log.i(TAG, "call: over unanswered — restoring music and the now-playing screen")
+                dlnaRenderer?.resumeAfterSystem()
+                ssLastTrack?.let { onSendspinTrack(it) }
+            }
         }
         if (now == inCall) return
         inCall = now
