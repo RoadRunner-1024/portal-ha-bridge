@@ -65,6 +65,13 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("sendspin_enabled", false)
         set(v) = sp.edit().putBoolean("sendspin_enabled", v).apply()
 
+    // Optional fixed Sendspin server, e.g. ws://192.168.1.10:8927/sendspin. Blank = find Music
+    // Assistant by mDNS as before. For networks where mDNS doesn't cross (separate IoT SSID/VLAN)
+    // or where Android's NSD stalls, so the Portal never finds the server on its own.
+    var sendspinServerUrl: String
+        get() = sp.getString("sendspin_server_url", "") ?: ""
+        set(v) = sp.edit().putString("sendspin_server_url", v.trim()).apply()
+
     // Show the on-screen now-playing overlay (art / title / controls / lyrics) while the Portal
     // is playing as a DLNA speaker. Independent of dlnaEnabled so playback can be silent-screen.
     var nowPlayingOverlayEnabled: Boolean
@@ -82,6 +89,14 @@ class Prefs(private val context: Context) {
             sp.edit().putString("device_id", new).apply()
             return new
         }
+
+    // Carry an existing HA identity over to a reinstall that got a new ANDROID_ID (Android 8+
+    // derives it from the signing key, so a differently-signed build would otherwise show up in
+    // HA as a second device with "_2" entities).
+    fun setDeviceId(id: String) {
+        val v = id.trim().lowercase()
+        if (v.matches(Regex("[0-9a-f]{8,64}"))) sp.edit().putString("device_id", v).apply()
+    }
 
     var tapThreshold: Float
         get() = sp.getFloat("tap_threshold", 4.0f)

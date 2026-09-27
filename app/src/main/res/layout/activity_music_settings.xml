@@ -76,6 +76,25 @@
             android:text="Play in step with other speakers, so the same track can run through the house without echo. Needs Music Assistant 2.8 or newer. Experimental."
             android:textSize="12sp"
             android:textColor="@color/hint"
+            android:layout_marginBottom="8dp" />
+
+        <EditText
+            android:id="@+id/et_sendspin_server"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Server (blank = find automatically)"
+            android:inputType="textUri"
+            android:singleLine="true"
+            android:textSize="14sp"
+            android:textColor="@color/onSurface"
+            android:textColorHint="@color/hint" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Only if the Portal can't find Music Assistant on its own (e.g. a separate IoT network). Enter its address, e.g. 192.168.1.10:8927 or ws://192.168.1.10:8927/sendspin."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
             android:layout_marginBottom="24dp" />
 
         <!-- ── Now playing ─────────────────────────────────────────────── -->

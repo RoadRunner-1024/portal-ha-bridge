@@ -2,6 +2,7 @@ package com.aeonos.portalha
 
 import android.os.Bundle
 import android.widget.Button
+import android.widget.EditText
 import android.widget.Switch
 import androidx.appcompat.app.AppCompatActivity
 
@@ -47,6 +48,7 @@ class MusicSettingsActivity : AppCompatActivity() {
         }
 
         updateUi()
+        findViewById<EditText>(R.id.et_sendspin_server).setText(prefs.sendspinServerUrl)
     }
 
     override fun onResume() {
@@ -58,6 +60,16 @@ class MusicSettingsActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         prefs.unregisterListener(prefsListener)
+        saveServer()
+    }
+
+    // Saved on leaving the screen (not per keystroke) so the player reconnects once.
+    private fun saveServer() {
+        val typed = findViewById<EditText>(R.id.et_sendspin_server)?.text?.toString()?.trim() ?: return
+        if (typed.isNotEmpty() && normalizeServerUrl(typed) == null) return
+        if (typed == prefs.sendspinServerUrl) return
+        prefs.sendspinServerUrl = typed
+        BridgeService.applySendspinServer()
     }
 
     private fun updateUi() {

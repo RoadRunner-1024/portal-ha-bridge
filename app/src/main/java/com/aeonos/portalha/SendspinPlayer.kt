@@ -51,6 +51,7 @@ private fun JsonOptional<String>.merge(previous: String): String = when (this) {
 class SendspinPlayer(
     private val context: Context,
     private val deviceName: () -> String,
+    private val serverUrl: () -> String = { "" },
 ) {
     private companion object { const val TAG = "PortalHA" }
 
@@ -207,6 +208,15 @@ class SendspinPlayer(
             .build()
             .also { runCatching { audio.requestAudioFocus(it) } }
 
+        // A fixed server URL skips discovery; the client reconnects on its own after drops.
+        val fixed = normalizeServerUrl(serverUrl())
+        if (fixed != null) {
+            connectJob = s.launch {
+                Log.i(TAG, "sendspin: connecting to fixed server $fixed")
+                runCatching { c.connect(fixed) }
+                    .onFailure { Log.w(TAG, "sendspin: connect failed: ${it.message}") }
+            }
+        } else
         // Follow the first server we find and keep following whichever is current.
         connectJob = s.launch {
             DiscoveryService(AndroidNsdBrowser(context)).discover().collectLatest { servers ->
@@ -280,4 +290,17 @@ class SendspinPlayer(
         runCatching { multicastLock?.release() }
         multicastLock = null
     }
+}
+
+/** "host", "host:port" or a full ws:// URL -> ws://host:port/sendspin; blank or invalid -> null. */
+internal fun normalizeServerUrl(raw: String): String? {
+    var u = raw.trim()
+    if (u.isEmpty()) return null
+    if (!u.contains("://")) u = "ws://$u"
+    val uri = runCatching { java.net.URI(u) }.getOrNull() ?: return null
+    if (uri.scheme != "ws" && uri.scheme != "wss") return null
+    val host = uri.host ?: return null
+    val port = if (uri.port > 0) uri.port else 8927
+    val path = if (uri.path.isNullOrEmpty() || uri.path == "/") "/sendspin" else uri.path
+    return "${uri.scheme}://$host:$port$path"
 }

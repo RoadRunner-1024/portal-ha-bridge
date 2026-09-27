@@ -354,6 +354,12 @@ class BridgeService : Service() {
 
         // Start/stop the speaker roles (DLNA, Sendspin) to match the prefs, without a service
         // restart. Called from the system settings page's MUSIC switches.
+        // The Music screen's server field: reconnect the synced player to the new address.
+        fun applySendspinServer() {
+            val svc = instance ?: return
+            Handler(Looper.getMainLooper()).post { svc.restartSendspin() }
+        }
+
         fun applyMediaSettings(context: Context) =
             context.startForegroundService(Intent(context, BridgeService::class.java)
                 .setAction(ACTION_APPLY_MEDIA))
@@ -1409,7 +1415,8 @@ class BridgeService : Service() {
         if (sendspinPlayer != null) return
         Log.i(TAG, "sendspin: starting synced player as '${prefs?.deviceName}'")
         ensureNowPlayingOverlay()
-        sendspinPlayer = SendspinPlayer(this, deviceName = { prefs?.deviceName ?: "Portal" }).apply {
+        sendspinPlayer = SendspinPlayer(this, deviceName = { prefs?.deviceName ?: "Portal" },
+                serverUrl = { prefs?.sendspinServerUrl ?: "" }).apply {
             onTrack = { t -> onSendspinTrack(t) }
             onArtwork = { bytes -> nowPlayingOverlay?.setArtwork(bytes) }
             start()
@@ -1426,6 +1433,13 @@ class BridgeService : Service() {
         Handler(Looper.getMainLooper()).post {
             intercomOverlays.forEach { runCatching { it.bringToFront() } }
         }
+    }
+
+    /** Reconnect the synced player on new server settings, if it's running. */
+    fun restartSendspin() {
+        if (sendspinPlayer == null) return
+        stopSendspin()
+        if (prefs?.sendspinEnabled == true) startSendspin()
     }
 
     private fun stopSendspin() {
@@ -1816,6 +1830,8 @@ class BridgeService : Service() {
         //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_CONFIG \
         //     --es name Portal-Go --es broker 192.168.0.39 --ei port 1883 \
         //     --es user mqttuser --es haUrl http://192.168.0.39:8123
+        //     --es sendspinUrl ws://192.168.0.39:8927/sendspin   (empty string = back to mDNS)
+        //     --es deviceId 0123456789abcdef   (keep the HA device across a re-signed reinstall)
         // ★Deliberately NO password: it would sit in shell history and the device log. That one
         // stays a typed-in-person field.
         debugConfigReceiver = object : BroadcastReceiver() {
@@ -1826,11 +1842,22 @@ class BridgeService : Service() {
                 intent.getStringExtra("broker")?.let { p.brokerHost = it; changed = true }
                 intent.getStringExtra("user")?.let { p.username = it; changed = true }
                 intent.getStringExtra("haUrl")?.let { p.haUrl = it; changed = true }
+                intent.getStringExtra("deviceId")?.let {
+                    if (it.trim().lowercase() != p.deviceId) { p.setDeviceId(it); changed = true }
+                }
                 if (intent.hasExtra("port")) {
                     p.brokerPort = intent.getIntExtra("port", 1883); changed = true
                 }
+                intent.getStringExtra("sendspinUrl")?.let { url ->
+                    if (url.trim() != p.sendspinServerUrl) {
+                        p.sendspinServerUrl = url
+                        Log.i(TAG, "config: sendspin server '${p.sendspinServerUrl}' (blank = mDNS)")
+                        restartSendspin()
+                    }
+                    if (!changed) return
+                }
                 if (!changed) return
-                Log.i(TAG, "config: name='${p.deviceName}' broker='${p.brokerHost}:${p.brokerPort}' " +
+                Log.i(TAG, "config: id='${p.deviceId}' name='${p.deviceName}' broker='${p.brokerHost}:${p.brokerPort}' " +
                     "user='${p.username}' haUrl='${p.haUrl}' (password unchanged)")
                 // Reconnect on the new details rather than waiting for a restart.
                 restartMqtt()
