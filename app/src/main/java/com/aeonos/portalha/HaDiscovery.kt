@@ -176,6 +176,17 @@ object HaDiscovery {
         return """{"name":"Now Playing Screen","unique_id":"${deviceId}_np_overlay","device":${device(deviceId, name)},"state_topic":"${npOverlayStateTopic(deviceId)}","command_topic":"${npOverlayCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:playlist-play","entity_category":"config"}"""
     }
 
+    // ── Ava keep-alive switch (Android 10, see AvaKeepAlive) ──────────────────
+
+    fun avaKeepAliveDiscoveryTopic(deviceId: String) = "homeassistant/switch/${deviceId}_ava_keepalive/config"
+    fun avaKeepAliveStateTopic(deviceId: String) = "portal/$deviceId/avakeepalive/state"
+    fun avaKeepAliveCommandTopic(deviceId: String) = "portal/$deviceId/avakeepalive/set"
+
+    fun avaKeepAliveConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Ava Keep-Alive","unique_id":"${deviceId}_ava_keepalive","device":${device(deviceId, name)},"state_topic":"${avaKeepAliveStateTopic(deviceId)}","command_topic":"${avaKeepAliveCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:microphone-message","entity_category":"config"}"""
+    }
+
     // ── Volume number (slider) ────────────────────────────────────────────────
 
     fun volumeDiscoveryTopic(deviceId: String) =
@@ -489,7 +500,8 @@ object HaDiscovery {
         tempOffsetCommandTopic(deviceId),
         dlnaCommandTopic(deviceId),
         sendspinCommandTopic(deviceId),
-        npOverlayCommandTopic(deviceId)
+        npOverlayCommandTopic(deviceId),
+        avaKeepAliveCommandTopic(deviceId)
     )
 
     // ── Shared helpers ────────────────────────────────────────────────────────

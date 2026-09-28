@@ -37,6 +37,7 @@ Everything below appears automatically as one HA **device** (named whatever you 
 | **Volume** + **Volume Mute** | number + switch | media volume |
 | **Mic Mute** | switch | microphone mute |
 | **Doorbell** / **Alert** | buttons | play a tone on the Portal |
+| **Ava Keep-Alive** | switch (config) | Android 10 only: keeps an external voice assistant hearing ([below](#keep-an-external-assistant-hearing-on-android-10)) |
 
 Camera, Motion, and Camera Streaming are mutually managed: Motion and Streaming each open Camera 0 and are **mutually exclusive**.
 
@@ -201,6 +202,17 @@ This app detects the wake phrase **on-device** (a small offline **Vosk** recogni
 
 ### Coexist with a voice assistant
 Prefer to run a *separate* always-on wake app (e.g. [portal-wake](https://github.com/rudysev/portal-wake)) instead of this app's built-in wake word? The Portal has a single microphone, so turn on **Coexist with voice assistant** (Settings → Voice & Assistants) and the bridge **releases the mic**: the **Sound Level** sensor and sound-based presence turn off, and the intercom captures on-demand only while you're announcing — so the other app can hear "Hey Jarvis" the rest of the time.
+
+### Keep an external assistant hearing on Android 10
+On Android 10 Portals (Portal 10", Mini) Meta's audio policy **silences the microphone of any app without a visible activity** - so an always-on assistant that listens from a background service (e.g. [Ava](https://github.com/knoop7/Ava-Pro), `com.example.ava`) records only silence while the dashboard is in front. Android 9 (Portal+) has no such policy.
+
+**Ava Keep-Alive** (off by default; Android 10 only; needs the assistant installed and Coexist on) works around it without covering the dashboard: the bridge opens the assistant's activity in a **freeform window parked off the bottom-right corner of the screen**. Android keeps a 48x32 px sliver of any freeform window on screen; the bridge hides it under a tiny overlay showing the dashboard pixels behind it. The dashboard stays visible and resumed, so the camera keeps streaming, and the assistant owns a visible activity, so it keeps hearing. Whatever moves the dashboard to the front (a wake, a navigate, Show Dashboard, a return from another app) hides the parked window again, so the bridge re-parks it: after its own dashboard starts, on screen on/off, when `logcat -s AudioPolicyService` shows the assistant losing its visible activity or being silenced, and on a 60 s check - never over a call, a cast, a settings screen or another app, and rate-limited. Each park is logged (`adb logcat -s PortalHA | grep keepalive`).
+
+- Turn it on with the **Ava Keep-Alive** switch in HA (or the adb line below).
+- Needs freeform windowing, which Android reads **at boot**: `adb shell settings put global enable_freeform_support 1`, `adb shell settings put global force_resizable_activities 1`, then **reboot once**. (The bridge sets both itself when they're off - WRITE_SECURE_SETTINGS - and waits for the reboot; it checks that its parked window really is freeform before starting the assistant in it, so a full-screen assistant can never cover the dashboard.)
+- Switch: **Ava Keep-Alive** entity, or `adb shell am broadcast -a com.aeonos.portalha.DEBUG_CONFIG -p com.aeonos.portalha --ez avaKeepAlive false|true`. Another assistant: `--es keepAlivePackage <package>`. State: `--ez keepAliveStatus true` logs one `keepalive: status ...` line.
+- Pause it before driving the assistant's own UI (it runs in the parked window): `--ei keepAlivePauseMinutes N` removes the parked window for N minutes (max 30) and the keep-alive comes back **by itself** when they run out, so an interrupted setup script can't leave the assistant deaf; `--ei keepAlivePauseMinutes 0` ends the pause early. The switch is untouched: switched off (HA or `--ez avaKeepAlive false`) stays off; switching it on ends a pause.
+- The corner overlay is re-copied every 3 s, and again 0.4, 1.2 and 2.5 s after each park, page change or wake, so a page still drawing when first copied doesn't stay frozen in the corner.
 
 ---
 

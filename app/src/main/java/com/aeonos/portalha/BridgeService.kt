@@ -287,6 +287,9 @@ class BridgeService : Service() {
 
         fun setDashboardForeground(fg: Boolean) {
             dashboardForeground = fg
+            // Android 10 assistant keep-alive: a resume may have covered the parked assistant, and
+            // the corner cover follows the dashboard (see AvaKeepAlive).
+            if (fg) instance?.keepAlive?.onDashboardResumed() else instance?.keepAlive?.onDashboardPaused()
             if (fg) { userLeftDashboard = false; instance?.clearForegroundSteal() }
             // We just lost the front and nothing marked it a deliberate departure. That covers
             // both shapes of steal: an app that sends a leave hint (an Alexa announcement — see
@@ -664,10 +667,17 @@ class BridgeService : Service() {
     // How many of OUR activities are resumed. Process-wide via the Application callbacks, so it
     // covers every settings screen without each one having to report in.
     @Volatile private var ourActivitiesResumed = 0
+    // Of those, the ones that are a real screen other than the dashboard (settings, the cast
+    // receiver, the update prompt) - the keep-alive never parks over one of them.
+    @Volatile private var otherScreensResumed = 0
     private val ourActivityWatch = object : android.app.Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(a: android.app.Activity) { ourActivitiesResumed++ }
+        override fun onActivityResumed(a: android.app.Activity) {
+            ourActivitiesResumed++
+            if (a !is DashboardActivity && a !is AvaKeepAliveActivity) otherScreensResumed++
+        }
         override fun onActivityPaused(a: android.app.Activity) {
             if (ourActivitiesResumed > 0) ourActivitiesResumed--
+            if (a !is DashboardActivity && a !is AvaKeepAliveActivity && otherScreensResumed > 0) otherScreensResumed--
         }
         override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) {}
         override fun onActivityStarted(a: android.app.Activity) {}
@@ -1018,6 +1028,12 @@ class BridgeService : Service() {
 
         screenOn = getSystemService(PowerManager::class.java).isInteractive
         lastActivityMs = System.currentTimeMillis()
+        // Android 10: keep the external voice assistant (Ava) able to hear - see AvaKeepAlive.
+        // Started here, before any photo/sleep overlay exists, so its corner cover sits below them.
+        // A timed setup pause survives a restart (an update mid-setup), clamped so it still ends.
+        val kaPause = AvaKeepAlive.clampPauseUntil(p.keepAlivePausedUntil)
+        if (kaPause != p.keepAlivePausedUntil) p.keepAlivePausedUntil = kaPause
+        keepAlive = AvaKeepAlive(this, keepAliveHost).also { it.start(p.avaKeepAlive, p.keepAlivePackage, kaPause) }
         reconcilePresence(p)
         reconcileDreamSlot(p)
         startDreamWatch()          // and take it back whenever the launcher grabs it
@@ -1163,6 +1179,7 @@ class BridgeService : Service() {
 
     override fun onDestroy() {
         running.set(false)
+        runCatching { keepAlive?.stop() }; keepAlive = null
         runCatching { screensaver.hide() }
         runCatching { sleepCover.hide() }   // never outlive the service holding the screen black
         dreamObserver?.let { runCatching { contentResolver.unregisterContentObserver(it) } }
@@ -1254,6 +1271,7 @@ class BridgeService : Service() {
                         screenOn = true
                         lastActivityMs = System.currentTimeMillis()  // restart the off-timer
                         publishState("ON"); reclaimForeground()
+                        keepAlive?.onScreen(true)
                         // Wake straight to the photos when asked. Revealed BEFORE the cover
                         // drops, so the hand-off is one composited step and the dashboard is
                         // never glimpsed on the way past.
@@ -1279,6 +1297,7 @@ class BridgeService : Service() {
                     }
                     Intent.ACTION_SCREEN_OFF -> {
                         screenOn = false; publishState("OFF")
+                        keepAlive?.onScreen(false)
                         // Put the cover up NOW, while the panel is dark, so it is already
                         // composited before the screen lights again. Skipped when the user is
                         // deliberately in another app — there is no flash to hide then, and
@@ -1634,6 +1653,7 @@ class BridgeService : Service() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             })
         }.onFailure { Log.w(TAG, "reclaimForeground failed: ${it.message}") }
+        keepAlive?.onDashboardStarted("dashboard reclaimed")   // the start just covered a parked assistant
     }
 
     private fun registerAudioReceiver() {
@@ -1821,6 +1841,42 @@ class BridgeService : Service() {
         debugConfigReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val p = prefs ?: return
+                // Android 10 assistant keep-alive (AvaKeepAlive):
+                //   --ez avaKeepAlive false|true   the switch (HA "Ava Keep-Alive"); true also ends a pause
+                //   --ei keepAlivePauseMinutes N   timed pause for setup scripts driving the assistant's
+                //                                  own UI (e.g. a provisioning script): off now, back on BY ITSELF after N
+                //                                  minutes (max 30); 0 ends it now. The switch is untouched.
+                //                                  (--el / --es are accepted too.)
+                //   --es keepAlivePackage com.example.ava
+                //   --ez keepAliveStatus true      (logs one "keepalive: status ..." line)
+                if (intent.hasExtra("avaKeepAlive")) {
+                    val on = intent.getBooleanExtra("avaKeepAlive", true)
+                    p.avaKeepAlive = on
+                    if (on && p.keepAlivePausedUntil != 0L) { p.keepAlivePausedUntil = 0L; keepAlive?.pauseUntil(0L) }
+                    keepAlive?.setEnabled(on)
+                    publishAvaKeepAliveState(p)
+                    Log.i(TAG, "config: ava keep-alive ${if (on) "ON" else "OFF"}")
+                }
+                if (intent.hasExtra("keepAlivePauseMinutes")) {
+                    @Suppress("DEPRECATION")
+                    val n = when (val v = intent.extras?.get("keepAlivePauseMinutes")) {
+                        is Number -> v.toLong()
+                        is String -> v.trim().toLongOrNull() ?: 0L
+                        else -> 0L
+                    }.coerceIn(0L, AvaKeepAlive.MAX_PAUSE_MINUTES.toLong())
+                    val until = if (n > 0L) System.currentTimeMillis() + n * 60_000L else 0L
+                    p.keepAlivePausedUntil = until
+                    keepAlive?.pauseUntil(until)
+                    Log.i(TAG, if (n > 0L) "config: ava keep-alive paused for $n min (switch ${if (p.avaKeepAlive) "on" else "off"})"
+                               else "config: ava keep-alive pause ended")
+                }
+                intent.getStringExtra("keepAlivePackage")?.let {
+                    p.keepAlivePackage = it
+                    keepAlive?.setPackage(p.keepAlivePackage)
+                }
+                if (intent.getBooleanExtra("keepAliveStatus", false)) {
+                    Log.i(TAG, keepAlive?.status() ?: "keepalive: status n/a (service starting)")
+                }
                 var changed = false
                 intent.getStringExtra("name")?.let { p.deviceName = it; changed = true }
                 intent.getStringExtra("broker")?.let { p.brokerHost = it; changed = true }
@@ -2002,7 +2058,8 @@ class BridgeService : Service() {
             HaDiscovery.haTokenCommandTopic(p.deviceId),
             HaDiscovery.dlnaCommandTopic(p.deviceId),
             HaDiscovery.sendspinCommandTopic(p.deviceId),
-            HaDiscovery.npOverlayCommandTopic(p.deviceId)
+            HaDiscovery.npOverlayCommandTopic(p.deviceId),
+            HaDiscovery.avaKeepAliveCommandTopic(p.deviceId)
         ).forEach { client.subscribe(it, 1) }
 
         // Intercom: subscribe to presence/lock/audio and announce ourselves.
@@ -2118,6 +2175,13 @@ class BridgeService : Service() {
         pub(HaDiscovery.sendspinDiscoveryTopic(p.deviceId), HaDiscovery.sendspinConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.npOverlayDiscoveryTopic(p.deviceId), HaDiscovery.npOverlayConfigPayload(p.deviceId, p.deviceName))
         publishDlnaState(p)
+        // Assistant keep-alive: Android 10 only (Android 9 has no policy to work around).
+        if (keepAlive?.supported == true) {
+            pub(HaDiscovery.avaKeepAliveDiscoveryTopic(p.deviceId), HaDiscovery.avaKeepAliveConfigPayload(p.deviceId, p.deviceName))
+            publishAvaKeepAliveState(p)
+        } else {
+            client.publish(HaDiscovery.avaKeepAliveDiscoveryTopic(p.deviceId), emptyRetained())
+        }
 
         // Camera, motion-enable and streaming-enable switches exist only while
         // the camera service is enabled; motion entities additionally require
@@ -2208,7 +2272,47 @@ class BridgeService : Service() {
             HaDiscovery.dlnaCommandTopic(p.deviceId)              -> handleDlnaCommand(payload, p)
             HaDiscovery.sendspinCommandTopic(p.deviceId)          -> handleSendspinCommand(payload, p)
             HaDiscovery.npOverlayCommandTopic(p.deviceId)         -> handleNpOverlayCommand(payload, p)
+            HaDiscovery.avaKeepAliveCommandTopic(p.deviceId)      -> handleAvaKeepAliveCommand(payload, p)
         }
+    }
+
+    // -- Android 10 assistant keep-alive (AvaKeepAlive) ------------------------------
+    private var keepAlive: AvaKeepAlive? = null
+
+    private val keepAliveHost = object : AvaKeepAlive.Host {
+        override fun parkBlocker(): String? = when {
+            inCall -> "a call is on"
+            ringing -> "a call is ringing"
+            TvAppActivity.isShowing() -> "a cast is showing"
+            otherScreensResumed > 0 -> "a Bridge screen is open"
+            micYieldedForWake -> "a wake hand-off is running"
+            userLeftDashboard -> "another app in front (the user's choice)"
+            screenIsOn && !dashboardForeground -> "another app in front"
+            else -> null
+        }
+        override val screenIsOn: Boolean
+            get() = getSystemService(PowerManager::class.java)?.isInteractive ?: screenOn
+        override val dashboardInFront: Boolean get() = dashboardForeground
+        override val fullScreenOverlayUp: Boolean
+            get() = screensaver.isShowing || sleepCover.isShowing ||
+                nowPlayingOverlay?.isShowing == true || wakeCoverView != null
+        // Last real touch/key on the dashboard, moved onto the elapsedRealtime clock.
+        override val lastTouchElapsed: Long
+            get() = lastInputMs.let { if (it == 0L) 0L else SystemClock.elapsedRealtime() - (System.currentTimeMillis() - it) }
+    }
+
+    private fun handleAvaKeepAliveCommand(payload: String, p: Prefs) {
+        val on = payload.equals("ON", ignoreCase = true)
+        // Switching it back on (off -> on) is explicit: it also ends a timed setup pause.
+        if (on && !p.avaKeepAlive && p.keepAlivePausedUntil != 0L) { p.keepAlivePausedUntil = 0L; keepAlive?.pauseUntil(0L) }
+        if (on != p.avaKeepAlive) p.avaKeepAlive = on
+        keepAlive?.setEnabled(on)
+        publishAvaKeepAliveState(p)
+        Log.i(TAG, "keepalive: HA set enabled=$on")
+    }
+
+    private fun publishAvaKeepAliveState(p: Prefs) {
+        publishRaw(HaDiscovery.avaKeepAliveStateTopic(p.deviceId), if (p.avaKeepAlive) "ON" else "OFF", 1, retained = true)
     }
 
     private fun handleDlnaCommand(payload: String, p: Prefs) {
@@ -3312,6 +3416,7 @@ class BridgeService : Service() {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                     or Intent.FLAG_ACTIVITY_NO_ANIMATION))
         }
+        keepAlive?.onDashboardStarted("dashboard to front")    // the start just covered a parked assistant
         // The dashboard is now on top (behind the cover) — give it a moment to draw,
         // then fade the frozen snapshot out to reveal the identical live dashboard.
         wakeHandler.postDelayed({ hideWakeCover() }, 300L)

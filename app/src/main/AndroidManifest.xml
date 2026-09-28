@@ -149,6 +149,20 @@
             android:name=".IntercomButtonsActivity"
             android:exported="false" />
 
+        <!--
+            AvaKeepAlive's parked window (Android 10): an invisible activity in its OWN freeform task,
+            launched off the bottom-right corner; it starts the voice assistant's activity inside that
+            task so the assistant keeps a visible activity (Meta's audio policy silences it otherwise).
+            Own task affinity so it never lands in the dashboard's task.
+        -->
+        <activity
+            android:name=".AvaKeepAliveActivity"
+            android:exported="false"
+            android:taskAffinity="com.aeonos.portalha.keepalive"
+            android:excludeFromRecents="true"
+            android:resizeableActivity="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Daily auto-update prompt: a dialog over whatever is showing. -->
         <activity
             android:name=".UpdatePromptActivity"
