@@ -52,6 +52,10 @@ class SendspinPlayer(
     private val context: Context,
     private val deviceName: () -> String,
     private val serverUrl: () -> String = { "" },
+    // Stable Sendspin client id. Without it the library picks a random UUID on every start, so each
+    // app restart or reboot shows up in Music Assistant as a NEW player (stale duplicates, and HA's
+    // media_player points at a dead one). Blank = library default (random).
+    private val clientId: () -> String = { "" },
 ) {
     private companion object { const val TAG = "PortalHA" }
 
@@ -185,6 +189,7 @@ class SendspinPlayer(
             okHttpClient = okHttp,
             moshi = moshi,
             preferences = prefs,
+            clientId = clientId().ifBlank { java.util.UUID.randomUUID().toString() },
             clientName = deviceName(),
             manufacturer = "Meta",
             productName = "Portal HA Bridge",

@@ -1416,7 +1416,8 @@ class BridgeService : Service() {
         Log.i(TAG, "sendspin: starting synced player as '${prefs?.deviceName}'")
         ensureNowPlayingOverlay()
         sendspinPlayer = SendspinPlayer(this, deviceName = { prefs?.deviceName ?: "Portal" },
-                serverUrl = { prefs?.sendspinServerUrl ?: "" }).apply {
+                serverUrl = { prefs?.sendspinServerUrl ?: "" },
+                clientId = { prefs?.deviceId?.let { "portal-ha-bridge-$it" } ?: "" }).apply {
             onTrack = { t -> onSendspinTrack(t) }
             onArtwork = { bytes -> nowPlayingOverlay?.setArtwork(bytes) }
             start()
