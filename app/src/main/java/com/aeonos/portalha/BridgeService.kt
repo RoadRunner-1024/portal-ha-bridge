@@ -181,6 +181,13 @@ class BridgeService : Service() {
         // resumed and drawn, short enough not to feel like a slow wake.
         private const val SLEEP_COVER_REVEAL_MS = 700L
 
+        // Navigate: a timed return is put off while the page is being used - until nobody has
+        // touched the screen for this long - rather than pulled out from under a finger.
+        private const val NAV_RETURN_TOUCH_GRACE_MS = 15_000L
+        // Second look for photos shortly after a navigate woke the screen, in case a slideshow
+        // tick raced the hold (it is checked on another thread).
+        private const val NAV_PHOTO_RECHECK_MS = 1_500L
+
         private const val ACTION_SET_CAMERA = "com.aeonos.portalha.SET_CAMERA"
         private const val EXTRA_CAMERA_ON = "camera_on"
         private const val ACTION_SET_ROTATION = "com.aeonos.portalha.SET_ROTATION"
@@ -309,7 +316,14 @@ class BridgeService : Service() {
         // activity for the on-device screen-off timer. It used to be reset only by presence,
         // wakes and HA commands, so the screen could go dark under someone's finger while they
         // were using the dashboard. Called for every touch event, so it must stay this cheap.
-        fun noteTouch() { instance?.lastActivityMs = System.currentTimeMillis() }
+        fun noteTouch() {
+            lastTouchElapsedMs = SystemClock.elapsedRealtime()
+            instance?.lastActivityMs = System.currentTimeMillis()
+        }
+
+        // When any of our windows was last touched, on the monotonic elapsedRealtime clock
+        // (0 = never). Lets a timed navigate wait for someone to finish using the page.
+        @Volatile private var lastTouchElapsedMs = 0L
 
         // The foreground app changed (reported by ScreenAccessibility). Used to auto-return the
         // dashboard after the Meta Calls flow — see checkCallReturn.
@@ -411,6 +425,7 @@ class BridgeService : Service() {
     private var debugConfigReceiver: BroadcastReceiver? = null
     private var debugCallReturnReceiver: BroadcastReceiver? = null
     private var debugTapReceiver: BroadcastReceiver? = null
+    private var debugNavigateReceiver: BroadcastReceiver? = null
     private var sensorBridge: SensorBridge? = null
     private var soundMonitor: SoundMonitor? = null
     private var dialServer: DialServer? = null
@@ -1209,6 +1224,8 @@ class BridgeService : Service() {
         debugScreenReceiver?.let { runCatching { unregisterReceiver(it) } }
         debugCallReturnReceiver?.let { runCatching { unregisterReceiver(it) } }
         debugTapReceiver?.let { runCatching { unregisterReceiver(it) } }
+        debugNavigateReceiver?.let { runCatching { unregisterReceiver(it) } }
+        wakeHandler.removeCallbacks(navReturn)
         sensorBridge?.stop()
         soundMonitor?.stop()
         wakeDetector?.stop()
@@ -1946,6 +1963,21 @@ class BridgeService : Service() {
         runCatching {
             registerReceiver(debugTapReceiver, IntentFilter("com.aeonos.portalha.DEBUG_TAP"))
         }
+
+        // Debug: the HA navigate command without a broker, same payloads:
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_NAVIGATE --es payload /lovelace/cameras
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_NAVIGATE --es payload '{"path":"/x","seconds":30}'
+        //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_NAVIGATE --es payload home
+        debugNavigateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val p = prefs ?: return
+                val payload = intent.getStringExtra("payload") ?: ""
+                commandExecutor.submit { runCatching { handleNavigateCommand(payload, p) } }
+            }
+        }
+        runCatching {
+            registerReceiver(debugNavigateReceiver, IntentFilter("com.aeonos.portalha.DEBUG_NAVIGATE"))
+        }
     }
 
     // ── MQTT loop ─────────────────────────────────────────────────────────────
@@ -2032,6 +2064,10 @@ class BridgeService : Service() {
             HaDiscovery.screensaverHoldCommandTopic(p.deviceId),
             // Shared across the fleet, so one HA action clears the photos everywhere.
             HaDiscovery.SCREENSAVER_FLEET_DISMISS_TOPIC,
+            HaDiscovery.navigateCommandTopic(p.deviceId),
+            // Likewise one publish points every Portal at a page (never purged at connect:
+            // an empty retained publish there would send every other Portal home).
+            HaDiscovery.NAVIGATE_FLEET_TOPIC,
             HaDiscovery.brightnessCommandTopic(p.deviceId),
             if (p.cameraServiceEnabled) HaDiscovery.cameraCommandTopic(p.deviceId) else null,
             // motion can be enabled live by the camera-ON cascade, so subscribe
@@ -2075,6 +2111,7 @@ class BridgeService : Service() {
         publishDisplayStates(p)
         publishRaw(HaDiscovery.ipStateTopic(p.deviceId), localIp() ?: "unknown", 1, retained = true)
         publishDashboardPathState(p)
+        publishNavigateState(p)
         if (sensorBridge?.hasTemperature == true)
             publishRaw(HaDiscovery.tempOffsetStateTopic(p.deviceId), "%.1f".format(p.tempOffset), 1, retained = true)
         if (p.cameraServiceEnabled) {
@@ -2156,6 +2193,9 @@ class BridgeService : Service() {
         pub(HaDiscovery.screensaverHoldDiscoveryTopic(p.deviceId), HaDiscovery.screensaverHoldConfigPayload(p.deviceId, p.deviceName))
         // Fleet button: identical payload from every Portal, so HA keeps exactly one entity.
         pub(HaDiscovery.fleetScreensaverDismissDiscoveryTopic(), HaDiscovery.fleetScreensaverDismissConfigPayload())
+        // Navigate: per Portal, plus one fleet-wide entity (identical from every Portal).
+        pub(HaDiscovery.navigateDiscoveryTopic(p.deviceId), HaDiscovery.navigateConfigPayload(p.deviceId, p.deviceName))
+        pub(HaDiscovery.fleetNavigateDiscoveryTopic(), HaDiscovery.fleetNavigateConfigPayload())
         pub(HaDiscovery.brightnessDiscoveryTopic(p.deviceId), HaDiscovery.brightnessConfigPayload(p.deviceId, p.deviceName))
         // HA long-lived token, settable from HA (for the Jarvis tool-provider's smart-home control).
         pub(HaDiscovery.haTokenDiscoveryTopic(p.deviceId), HaDiscovery.haTokenConfigPayload(p.deviceId, p.deviceName))
@@ -2243,6 +2283,8 @@ class BridgeService : Service() {
             HaDiscovery.screensaverDismissCommandTopic(p.deviceId),
             HaDiscovery.SCREENSAVER_FLEET_DISMISS_TOPIC           -> dismissScreensaverFromHa(payload, p)
             HaDiscovery.screensaverHoldCommandTopic(p.deviceId)   -> handleScreensaverHoldCommand(payload, p)
+            HaDiscovery.navigateCommandTopic(p.deviceId),
+            HaDiscovery.NAVIGATE_FLEET_TOPIC                      -> handleNavigateCommand(payload, p)
             HaDiscovery.brightnessCommandTopic(p.deviceId)        -> handleBrightnessCommand(payload, p)
             HaDiscovery.cameraCommandTopic(p.deviceId)            -> handleCameraCommand(payload, p)
             HaDiscovery.motionSensitivityCommandTopic(p.deviceId) -> handleMotionSensitivityCommand(payload, p)
@@ -3907,6 +3949,108 @@ class BridgeService : Service() {
         exitScreensaver()
         Log.i(TAG, "screensaver: dismissed by HA (showing=$wasShowing, held ${hold}s)")
     }
+
+    // ── Navigate: put any HA page on this Portal, then come back ───────────────────
+    // The page a navigate is showing ("" = home). Published as the Navigate entity's state.
+    @Volatile private var navPath = ""
+    private val navReturn = Runnable { returnFromNavigate(timed = true) }
+
+    /** A parsed navigate payload. [path] "" = go home. [seconds] 0 = stay until told otherwise. */
+    private data class NavRequest(val path: String, val seconds: Int, val dismiss: Boolean)
+
+    /**
+     * "/x", "home", "" or {"path":"/x","seconds":180,"dismiss":true}. null = not a path (another
+     * scheme, bad JSON) - refused. dismiss defaults to true.
+     */
+    private fun parseNavigate(payload: String): NavRequest? {
+        val s = payload.trim()
+        var raw = s
+        var seconds = 0
+        var dismiss = true
+        if (s.startsWith("{")) {
+            val o = runCatching { org.json.JSONObject(s) }.getOrNull() ?: return null
+            raw = o.optString("path", "")
+            seconds = o.optInt("seconds", 0)
+            dismiss = o.optBoolean("dismiss", true)
+        }
+        if (raw.trim().equals("home", ignoreCase = true)) raw = ""
+        val path = DashboardUrls.cleanPath(raw) ?: return null
+        return NavRequest(path, seconds.coerceIn(0, 86_400), dismiss)
+    }
+
+    /**
+     * HA "Navigate" (per Portal, or the fleet topic): show a page of the same Home Assistant in
+     * the dashboard's own WebView - a camera view when the doorbell rings, say - and optionally
+     * return home after `seconds`.
+     *
+     * With dismiss (the default) it is a proper "look at this": the screen wakes, the photos go
+     * and are held off for `seconds` (the dismiss-hold default when 0), and the dashboard comes
+     * to the front. dismiss=false only moves the page, silently - no wake, photos left alone.
+     *
+     * ★Camera-safe by construction: it is the dashboard's own WebView and activity, never a new
+     * activity or another app, so the dashboard stays the foreground activity and Camera 0 keeps
+     * streaming. And it stays out of the way of what outranks it: never during a call (ringing
+     * included - bringing the dashboard forward PiPs the call UI) and never over a YouTube cast.
+     */
+    private fun handleNavigateCommand(payload: String, p: Prefs) {
+        val req = parseNavigate(payload)
+        if (req == null) { Log.w(TAG, "navigate: refused '$payload' (not a path)"); return }
+        if (req.path.isEmpty()) { wakeHandler.post { returnFromNavigate(timed = false) }; return }
+        if (inCall || ringing) { Log.i(TAG, "navigate: ignored '${req.path}' - a call has the screen"); return }
+        if (TvAppActivity.isShowing() || dialServer?.appRunning == true) {
+            Log.i(TAG, "navigate: ignored '${req.path}' - casting"); return
+        }
+        val url = DashboardUrls.page(p.haUrl, req.path)
+        if (url.isEmpty()) { Log.w(TAG, "navigate: no Home Assistant URL set"); return }
+        Log.i(TAG, "navigate: $url (seconds=${req.seconds}, dismiss=${req.dismiss})")
+        navPath = req.path
+        publishNavigateState(p)
+        wakeHandler.post {
+            wakeHandler.removeCallbacks(navReturn)
+            // Target first: if the dashboard has to be (re)created below, its onCreate loads it.
+            DashboardActivity.navigate(url)
+            if (req.dismiss) {
+                val now = System.currentTimeMillis()
+                val holdSecs = if (req.seconds > 0) req.seconds else p.screensaverDismissHoldSecs
+                // Hold BEFORE waking: the screen-on that the wake causes honours it, so
+                // wake-to-photos can't put the photos straight back over the page.
+                screensaverHoldUntilMs = maxOf(screensaverHoldUntilMs, now + holdSecs * 1000L)
+                lastInteractionMs = now   // restart the slideshow countdown too
+                lastActivityMs = now      // and the screen-off one
+                screensaver.hide()
+                ScreenControl.wake(this)
+                // Mid assistant turn the assistant must keep the front (its mic is silenced in
+                // the background); the end of the turn brings the dashboard back, on this page.
+                if (!micYieldedForWake) bringDashboardToFront()
+                wakeHandler.postDelayed({
+                    if (navPath.isNotEmpty() && screensaver.isShowing &&
+                        System.currentTimeMillis() < screensaverHoldUntilMs) screensaver.hide()
+                }, NAV_PHOTO_RECHECK_MS)
+            }
+            if (req.seconds > 0) wakeHandler.postDelayed(navReturn, req.seconds * 1000L)
+        }
+    }
+
+    /** Back to the dashboard path. [timed]: the navigate's own timer, which waits out active use. */
+    private fun returnFromNavigate(timed: Boolean) {
+        wakeHandler.removeCallbacks(navReturn)
+        if (timed) {
+            val touched = lastTouchElapsedMs
+            val since = SystemClock.elapsedRealtime() - touched
+            if (touched > 0L && since < NAV_RETURN_TOUCH_GRACE_MS) {
+                wakeHandler.postDelayed(navReturn, NAV_RETURN_TOUCH_GRACE_MS - since)
+                return
+            }
+        }
+        val was = navPath
+        navPath = ""
+        DashboardActivity.navigate(null)
+        Log.i(TAG, "navigate: home (${if (timed) "timer" else "asked"}; was '$was')")
+        prefs?.let { p -> commandExecutor.submit { publishNavigateState(p) } }
+    }
+
+    private fun publishNavigateState(p: Prefs) =
+        publishRaw(HaDiscovery.navigateStateTopic(p.deviceId), navPath, 1, retained = true)
 
     /**
      * Take (or hand back) the system screensaver slot.

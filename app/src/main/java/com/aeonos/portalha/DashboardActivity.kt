@@ -56,7 +56,25 @@ class DashboardActivity : AppCompatActivity() {
          */
         fun reloadHome() {
             val act = instance ?: return
-            act.runOnUiThread { act.loadDashboard() }
+            act.runOnUiThread { if (navUrl == null) act.loadDashboard() }
+        }
+
+        // ── Navigate (HA "Navigate" command, see BridgeService.handleNavigateCommand) ──────
+        // The page HA asked for, as a full URL on the HA origin, or null while the kiosk is home.
+        // Process-wide rather than per activity so it survives the dashboard being recreated
+        // (renderer death) or not existing yet when the request arrives.
+        @Volatile private var navUrl: String? = null
+
+        /**
+         * Show [url] - a page of the same Home Assistant - in the dashboard's own WebView, or go
+         * back home with null. Never a new activity or another app: the dashboard stays the
+         * foreground activity, which is what keeps the camera streaming. Safe from any thread.
+         * With no dashboard alive the request is kept and its onCreate loads it.
+         */
+        fun navigate(url: String?) {
+            navUrl = url
+            val act = instance ?: return
+            act.runOnUiThread { act.showTarget() }
         }
     }
 
@@ -292,9 +310,12 @@ class DashboardActivity : AppCompatActivity() {
         BridgeService.ensureCamera(this)
         // Reload if the page wandered off home (a link out of Home Assistant) or home itself
         // changed in settings. Home = <HA origin><dashboard path>, or haUrl when no path is set.
+        // While a navigate is showing some other page, that page IS where we should be: don't
+        // bounce it home on every resume (a wake, returning from settings) - the navigate's own
+        // timer or a "home" command brings it back.
         val home = homeUrl()
         val current = webView.url ?: ""
-        if (home.isNotEmpty() && !DashboardUrls.isAtHome(current, home)) {
+        if (navUrl == null && home.isNotEmpty() && !DashboardUrls.isAtHome(current, home)) {
             loadDashboard()
         }
     }
@@ -399,8 +420,48 @@ class DashboardActivity : AppCompatActivity() {
                 android.util.Log.i("PortalHA", "webview: cleared HTTP cache for a fresh start")
                 webView.clearCache(true)
             }
-            webView.loadUrl(url)
+            webView.loadUrl(navUrl ?: url)
         }
+    }
+
+    /**
+     * Go to the navigate target (or home) without reloading Home Assistant when possible.
+     *
+     * A navigate is usually a camera pop-up, so speed matters: a full loadUrl() boots the whole
+     * HA frontend again (seconds on a Portal) and drops its websocket. When the page is already
+     * Home Assistant on the same origin, move it the way HA's own navigate() does - pushState
+     * plus a "location-changed" event, which its router follows instantly. Anything else (the
+     * placeholder, an error page, another origin, a page that isn't HA) gets a plain loadUrl.
+     * Going home with no dashboard path set also reloads outright: home is then haUrl itself,
+     * which may not be a routable HA path.
+     */
+    private fun showTarget() {
+        val home = homeUrl()
+        if (home.isEmpty()) { loadDashboard(); return }
+        val nav = navUrl
+        val target = nav ?: home
+        val origin = DashboardUrls.origin(home)
+        val current = webView.url ?: ""
+        val soft = (nav != null || prefs.dashboardPath.isNotEmpty()) &&
+            DashboardUrls.sameOrigin(current, origin) && DashboardUrls.sameOrigin(target, origin)
+        if (!soft) { webView.loadUrl(target); return }
+        val path = target.substring(origin.length).ifEmpty { "/" }
+        webView.evaluateJavascript(spaNavigateJs(path)) { r ->
+            if (r?.trim() != "1") {
+                android.util.Log.i("PortalHA", "navigate: not an HA page here - loading $target")
+                webView.loadUrl(target)
+            }
+        }
+    }
+
+    // HA's navigate(): history.pushState + a "location-changed" event on window. Returns 1 when
+    // the page is the HA frontend (and was moved), 0 otherwise.
+    private fun spaNavigateJs(path: String): String {
+        val p = org.json.JSONObject.quote(path)
+        return "(function(){try{if(!document.querySelector('home-assistant'))return 0;" +
+            "history.pushState(null,'',$p);" +
+            "window.dispatchEvent(new CustomEvent('location-changed',{detail:{replace:false}}));" +
+            "return 1;}catch(e){return 0;}})()"
     }
 
     /**

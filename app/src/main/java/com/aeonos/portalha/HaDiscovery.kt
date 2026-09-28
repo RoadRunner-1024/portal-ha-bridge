@@ -321,6 +321,34 @@ object HaDiscovery {
     fun fleetScreensaverDismissConfigPayload(): String =
         """{"name":"Dismiss Screensaver (All Portals)","unique_id":"${FLEET_DEVICE_ID}_screensaver_dismiss","device":{"identifiers":["$FLEET_DEVICE_ID"],"name":"Portal Fleet","model":"Meta Portal","manufacturer":"Meta"},"command_topic":"$SCREENSAVER_FLEET_DISMISS_TOPIC","payload_press":"dismiss","icon":"mdi:image-off-outline"}"""
 
+    // ── Navigate: show any HA page on the Portal ──────────────────────────────
+    // Payload: a path ("/home-cameras/front_doorbell"), or JSON
+    // {"path":"/x","seconds":180,"dismiss":true}; "home" or "" goes back to the dashboard path.
+    // State = the path a navigate is showing, "" while home. See BridgeService.handleNavigateCommand.
+
+    fun navigateCommandTopic(deviceId: String) = "portal/$deviceId/navigate"
+    fun navigateStateTopic(deviceId: String) = "portal/$deviceId/navigate/state"
+
+    fun navigateDiscoveryTopic(deviceId: String) =
+        "homeassistant/text/${deviceId}_navigate/config"
+
+    fun navigateConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Navigate","unique_id":"${deviceId}_navigate","device":${device(deviceId, name)},"state_topic":"${navigateStateTopic(deviceId)}","command_topic":"${navigateCommandTopic(deviceId)}","mode":"text","min":0,"max":255,"icon":"mdi:compass-outline"}"""
+    }
+
+    /** Fleet-wide navigate: one publish moves every Portal (same idea as the fleet dismiss). */
+    const val NAVIGATE_FLEET_TOPIC = "portal/navigate"
+
+    // Same trick as the fleet dismiss button: identical retained config from every Portal, one
+    // entity on the synthetic "Portal Fleet" device. Optimistic (no state): each Portal tracks
+    // its own navigation.
+    fun fleetNavigateDiscoveryTopic() =
+        "homeassistant/text/${FLEET_DEVICE_ID}_navigate/config"
+
+    fun fleetNavigateConfigPayload(): String =
+        """{"name":"Navigate (All Portals)","unique_id":"${FLEET_DEVICE_ID}_navigate","device":{"identifiers":["$FLEET_DEVICE_ID"],"name":"Portal Fleet","model":"Meta Portal","manufacturer":"Meta"},"command_topic":"$NAVIGATE_FLEET_TOPIC","mode":"text","min":0,"max":255,"icon":"mdi:compass"}"""
+
     // ── Screen brightness number (slider) ─────────────────────────────────────
 
     fun brightnessDiscoveryTopic(deviceId: String) =
@@ -502,6 +530,7 @@ object HaDiscovery {
         screenTimeoutMinsCommandTopic(deviceId),
         tempOffsetCommandTopic(deviceId),
         dashboardPathCommandTopic(deviceId),
+        navigateCommandTopic(deviceId),
         dlnaCommandTopic(deviceId),
         sendspinCommandTopic(deviceId),
         npOverlayCommandTopic(deviceId)
