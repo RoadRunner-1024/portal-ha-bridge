@@ -321,6 +321,20 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("auto_dismiss_call_screensaver", true)
         set(v) = sp.edit().putBoolean("auto_dismiss_call_screensaver", v).apply()
 
+    // Android 10 keep-alive for an external voice assistant (see AvaKeepAlive): the assistant's
+    // activity is parked in a freeform window pushed almost entirely off screen, so Meta's audio
+    // policy keeps its microphone live while the dashboard stays in front. Only acts on SDK >= 29
+    // with the assistant installed. Off by default (it changes two developer settings and needs a
+    // reboot once). HA switch "Ava Keep-Alive"; adb DEBUG_CONFIG --ez avaKeepAlive.
+    var avaKeepAlive: Boolean
+        get() = sp.getBoolean("ava_keep_alive", false)
+        set(v) = sp.edit().putBoolean("ava_keep_alive", v).apply()
+
+    // Which assistant the keep-alive parks (its launcher activity). adb DEBUG_CONFIG --es keepAlivePackage.
+    var keepAlivePackage: String
+        get() = sp.getString("keep_alive_pkg", AvaKeepAlive.DEFAULT_PACKAGE) ?: AvaKeepAlive.DEFAULT_PACKAGE
+        set(v) = sp.edit().putString("keep_alive_pkg", v.trim().ifEmpty { AvaKeepAlive.DEFAULT_PACKAGE }).apply()
+
     // Normally presence holds the screen awake — someone is standing there, so blanking would
     // be wrong. On a panel that should go dark on a fixed schedule regardless (a bedroom, or a
     // photo frame you want off at night), this lets the countdown run even while the room is

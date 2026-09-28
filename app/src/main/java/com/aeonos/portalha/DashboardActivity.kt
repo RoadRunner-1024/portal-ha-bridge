@@ -48,6 +48,25 @@ class DashboardActivity : AppCompatActivity() {
                 }, android.os.Handler(android.os.Looper.getMainLooper()))
             }.onFailure { cb(null) }
         }
+
+        /**
+         * PixelCopy of one rectangle of the dashboard window (window = screen coordinates: the
+         * dashboard is full screen). AvaKeepAlive paints it over the parked assistant's corner
+         * sliver so the corner looks exactly like the dashboard. Null when not possible.
+         */
+        fun copyRegion(src: android.graphics.Rect, cb: (android.graphics.Bitmap?) -> Unit) {
+            val act = instance
+            if (act == null || src.width() <= 0 || src.height() <= 0) { cb(null); return }
+            runCatching {
+                val v = act.window.decorView
+                if (!v.isAttachedToWindow || v.width < src.right || v.height < src.bottom) { cb(null); return }
+                val bmp = android.graphics.Bitmap.createBitmap(
+                    src.width(), src.height(), android.graphics.Bitmap.Config.ARGB_8888)
+                android.view.PixelCopy.request(act.window, src, bmp, { result ->
+                    cb(if (result == android.view.PixelCopy.SUCCESS) bmp else null)
+                }, android.os.Handler(android.os.Looper.getMainLooper()))
+            }.onFailure { cb(null) }
+        }
     }
 
     private lateinit var webView: WebView
