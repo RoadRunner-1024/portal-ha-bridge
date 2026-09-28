@@ -322,7 +322,8 @@ class BridgeService : Service() {
         }
 
         // When any of our windows was last touched, on the monotonic elapsedRealtime clock
-        // (0 = never). Lets a timed navigate wait for someone to finish using the page.
+        // (0 = never). Lets a timed navigate wait for someone to finish using the page, and the
+        // knock detector tell a knock on the frame from a tap on the screen.
         @Volatile private var lastTouchElapsedMs = 0L
 
         // The foreground app changed (reported by ScreenAccessibility). Used to auto-return the
@@ -928,7 +929,7 @@ class BridgeService : Service() {
 
         val p = Prefs(this).also { prefs = it }
         ScreenControl.enableAccessibility(this)
-        sensorBridge = SensorBridge(this, ::publishRaw).also { it.start(p) }
+        sensorBridge = SensorBridge(this, ::publishRaw) { lastTouchElapsedMs }.also { it.start(p) }
         soundMonitor = SoundMonitor(this) { level ->
             lastSoundLevel = level
             prefs?.let { p ->
@@ -2175,6 +2176,7 @@ class BridgeService : Service() {
 
         pub(HaDiscovery.tapDiscoveryTopic(p.deviceId), HaDiscovery.tapConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.sensitivityDiscoveryTopic(p.deviceId), HaDiscovery.sensitivityConfigPayload(p.deviceId, p.deviceName))
+        pub(HaDiscovery.knockDiscoveryTopic(p.deviceId), HaDiscovery.knockConfigPayload(p.deviceId, p.deviceName))
         // The Sound Level sensor only exists when we hold the mic; in coexist mode the
         // mic is released, so remove the entity instead of publishing a stale value.
         if (p.coexistVoiceAssistant)

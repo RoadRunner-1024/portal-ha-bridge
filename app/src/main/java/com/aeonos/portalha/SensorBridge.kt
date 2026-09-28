@@ -13,7 +13,10 @@ import kotlin.math.sqrt
 
 class SensorBridge(
     private val context: android.content.Context,
-    private val onPublish: (topic: String, payload: String, qos: Int) -> Unit
+    private val onPublish: (topic: String, payload: String, qos: Int) -> Unit,
+    // When one of the app's windows was last touched, on SystemClock.elapsedRealtime (0 = never):
+    // a knock next to a touch is the screen being tapped, not the frame being knocked.
+    private val lastTouchAt: () -> Long = { 0L }
 ) : SensorEventListener {
 
     companion object {
@@ -54,6 +57,9 @@ class SensorBridge(
     private var gravInit = false
 
     private var lastTapMs = 0L
+    // Double knock -> the "Knock" event entity. Separate from the Tap sensor above (whose 800 ms
+    // cooldown can't see a second knock anyway), which keeps behaving exactly as before.
+    private val knocks = KnockDetector()
     private var lastLightMs = 0L
     private var lastLux = Float.MIN_VALUE
     private var lastAccelMs = 0L
@@ -187,5 +193,24 @@ class SensorBridge(
                 onPublish(HaDiscovery.tapStateTopic(p.deviceId), "none", 0)
             }, "tap_reset", SystemClock.uptimeMillis() + TAP_RESET_MS)
         }
+
+        // Same force, same (live) threshold as the tap above - the Tap Sensitivity number tunes
+        // both. Timed on elapsedRealtime, the clock the touch timestamps use.
+        knocks.onSample(SystemClock.elapsedRealtime(), force, threshold)?.let { c ->
+            handler.postDelayed({ confirmKnock(c) }, knocks.touchGuardMs)
+        }
+    }
+
+    // Runs touchGuardMs after the second knock, on the sensor thread like everything else here.
+    private fun confirmKnock(c: KnockDetector.Candidate) {
+        val p = prefs ?: return
+        val touch = lastTouchAt()
+        if (!knocks.confirm(c, touch)) {
+            Log.i(TAG, "knock: double knock ignored - screen touched ${touch - c.firstMs}ms from its first knock")
+            return
+        }
+        Log.i(TAG, "knock: DOUBLE (gap ${c.gapMs}ms)")
+        onPublish(HaDiscovery.knockStateTopic(p.deviceId),
+            """{"event_type":"double_knock","gap_ms":${c.gapMs}}""", 1)
     }
 }

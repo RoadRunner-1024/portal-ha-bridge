@@ -136,6 +136,22 @@ object HaDiscovery {
         return """{"name":"$tapLabel Sensitivity","unique_id":"${deviceId}_tap_sensitivity","device":${device(deviceId, name)},"state_topic":"${sensitivityStateTopic(deviceId)}","command_topic":"${sensitivityCommandTopic(deviceId)}","min":2.0,"max":15.0,"step":0.5,"mode":"slider","icon":"$tapSensIcon"}"""
     }
 
+    // ── Double knock (event entity) ───────────────────────────────────────────
+    // Two knocks on the frame 150-800 ms apart, then 5 s of cooldown; ignored when the screen was
+    // touched around them. Uses the Tap Sensitivity threshold. Payload:
+    // {"event_type":"double_knock","gap_ms":N}. Never retained - an event replayed at every
+    // reconnect would fire automations.
+
+    fun knockDiscoveryTopic(deviceId: String) =
+        "homeassistant/event/${deviceId}_knock/config"
+
+    fun knockStateTopic(deviceId: String) = "portal/$deviceId/event/knock"
+
+    fun knockConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Knock","unique_id":"${deviceId}_knock","device":${device(deviceId, name)},"state_topic":"${knockStateTopic(deviceId)}","event_types":["double_knock"],"icon":"mdi:gesture-double-tap"}"""
+    }
+
     // ── Sound level sensor ────────────────────────────────────────────────────
 
     fun soundDiscoveryTopic(deviceId: String) =
