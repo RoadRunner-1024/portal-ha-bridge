@@ -6,6 +6,18 @@ the latest GitHub release.
 
 ## Unreleased
 
+**Added**
+- **Dashboard Path**: open the kiosk on any dashboard or view (`/dashboard-kitchen`) from a Home
+  Assistant text entity (or adb), while the HA URL stays the plain address the app's REST calls
+  need. Empty = as before.
+- **Navigate**: put any page of your Home Assistant on a Portal — or on every Portal at once —
+  from an automation, e.g. the door camera when the doorbell rings, and optionally go back after
+  N seconds. It wakes the screen and holds the photos off; the page opens instantly when the
+  dashboard is already showing Home Assistant. `portal/<device_id>/navigate` and
+  `portal/navigate`, plus **Navigate** text entities.
+- **Double knock**: knock twice on the Portal's frame and the new **Knock** event entity fires
+  `double_knock`. Taps on the screen don't count; the Tap sensitivity sets the threshold.
+
 **Fixed**
 - **The screen no longer goes dark while you're using it.** The on-device Screen Timeout only
   restarted on presence and wakes; now any touch on the app's screens — the dashboard, the photo
