@@ -110,7 +110,6 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         // someone typing on the dashboard. Wait for the screen to be left alone first.
         private const val TOUCH_IDLE_MS = 8_000L
         private const val TOUCH_IDLE_SILENCED_MS = 3_000L
-        private const val MAX_POSTPONE_MS = 6_000L
         // Our activity re-starting the assistant inside our task (it finished or was removed).
         private const val INNER_MIN_GAP_MS = 5_000L
         private const val INNER_MAX_PER_10MIN = 8
@@ -151,7 +150,8 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
     @Volatile private var backoffMs = 0L
     @Volatile private var backoffUntil = 0L
     @Volatile private var pendingReason: String? = null
-    @Volatile private var pendingSinceMs = 0L
+    @Volatile private var pendingDueMs = 0L
+    @Volatile private var pendingForced = false
     @Volatile private var lastSkipLog = ""
     @Volatile private var lastSkipLogMs = 0L
 
@@ -211,9 +211,9 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         if (!supported) return
         if (on) {
             main.post { ensureCoverWindows() }
-            request("enabled", 1_000L)
+            request("enabled", 1_000L, force = true)
         } else {
-            main.removeCallbacks(attemptRunnable); pendingReason = null
+            main.removeCallbacks(attemptRunnable); pendingReason = null; pendingForced = false
             stopLogReader()
             main.post { setCoverVisible(false) }
             // Take the parked window away entirely: our task, and the assistant's activity in it.
@@ -228,36 +228,46 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         stopLogReader()
         removeOurTask("package changed")
         Log.i(TAG, "keepalive: package now $pkg")
-        request("package changed", 1_000L)
+        request("package changed", 1_000L, force = true)
     }
 
     // ── Triggers ─────────────────────────────────────────────────────────────────
 
-    /** Ask for a park [delayMs] from now. Coalesces bursts; never postponed past MAX_POSTPONE_MS. */
-    fun request(reason: String, delayMs: Long = 1_500L) {
+    /**
+     * Ask for a park [delayMs] from now. A burst of triggers becomes one attempt at the EARLIEST
+     * requested time (a later, lazier trigger never delays an urgent one). Unless [force], the
+     * attempt is dropped when the log shows the assistant visible and not silenced by then (the
+     * trigger did not actually cover it). Our own dashboard starts are processed by the system
+     * before startActivity returns, so a short delay is enough for them.
+     */
+    fun request(reason: String, delayMs: Long = 1_500L, force: Boolean = false) {
         if (!supported || !enabled || !started) return
         main.post {
-            val now = SystemClock.elapsedRealtime()
+            val due = SystemClock.elapsedRealtime() + delayMs
             val pr = pendingReason
             if (pr != null) {
-                // A burst: keep one attempt, but a stream of triggers can't postpone it forever.
-                if (now - pendingSinceMs >= MAX_POSTPONE_MS) return@post
-                main.removeCallbacks(attemptRunnable)
                 pendingReason = "${pr.substringBefore(" +")} +$reason"
+                pendingForced = pendingForced || force
+                if (due >= pendingDueMs) return@post
+                main.removeCallbacks(attemptRunnable)
             } else {
-                pendingReason = reason; pendingSinceMs = now
+                pendingReason = reason; pendingForced = force
             }
+            pendingDueMs = due
             main.postDelayed(attemptRunnable, delayMs)
         }
     }
 
+    /** Our own dashboard start (bringDashboardToFront / reclaimForeground) just covered the parked window. */
+    fun onDashboardStarted(reason: String) = request(reason, 600L)
+
     fun onScreen(on: Boolean) {
-        if (on) request("screen on", 1_500L) else request("screen off", 2_500L)
+        if (on) request("screen on", 1_000L) else request("screen off", 1_200L)
         main.post { updateCover() }
     }
 
     fun onDashboardResumed() {
-        request("dashboard resumed", 1_500L)
+        request("dashboard resumed", 500L)
         main.post { updateCover() }
     }
 
@@ -269,17 +279,20 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
 
     private val attemptRunnable = Runnable {
         val reason = pendingReason ?: "?"
-        pendingReason = null
-        attempt(reason)
+        val forced = pendingForced
+        pendingReason = null; pendingForced = false
+        attempt(reason, forced)
     }
 
-    private fun attempt(reason: String) {
+    private fun attempt(reason: String, forced: Boolean = false) {
         if (!supported || !enabled || !started) return
         if (!resolve()) { skip("assistant $pkg not installed"); return }
         ensureLogReader()
         if (freeformOk == false) { skip("freeform windowing is not active on this boot (reboot once after enabling it)"); return }
         if (!freeformGlobalsOn()) { enableFreeformGlobals(); return }
         host.parkBlocker()?.let { skip(it); return }
+        // Still visible and hearing (per AudioPolicyService) after the trigger: nothing to do.
+        if (!forced && lastParkMs != 0L && avaFg == 1 && avaAppState != 0 && logThread?.isAlive == true) return
         val now = SystemClock.elapsedRealtime()
         // Leave a finger alone: a park moves input focus (the keyboard would close mid-typing).
         val idleNeed = if (avaAppState == 0) TOUCH_IDLE_SILENCED_MS else TOUCH_IDLE_MS
@@ -300,9 +313,11 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
     }
 
     private fun retryIn(reason: String, ms: Long) {
-        if (pendingReason == null) { pendingReason = reason; pendingSinceMs = SystemClock.elapsedRealtime() }
+        if (pendingReason == null) pendingReason = reason
+        val d = ms.coerceIn(200L, BACKOFF_MAX_MS)
+        pendingDueMs = SystemClock.elapsedRealtime() + d
         main.removeCallbacks(attemptRunnable)
-        main.postDelayed(attemptRunnable, ms.coerceIn(200L, BACKOFF_MAX_MS))
+        main.postDelayed(attemptRunnable, d)
     }
 
     private fun skip(why: String) {
@@ -349,7 +364,7 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         val last = innerStarts.lastOrNull() ?: 0L
         if (innerStarts.size >= INNER_MAX_PER_10MIN || (last != 0L && now - last < INNER_MIN_GAP_MS)) {
             skip("the assistant keeps leaving our window (${innerStarts.size} starts in 10 min) - waiting")
-            main.postDelayed({ request("assistant restart retry", 0L) }, 60_000L)
+            main.postDelayed({ request("assistant restart retry", 0L, force = true) }, 60_000L)
             return
         }
         innerStarts.addLast(now); innerCount++
@@ -452,7 +467,7 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
             host.screenIsOn && avaFg == 0 -> "not visible (check)"
             else -> null
         } ?: return
-        request(why, 0L)
+        request(why, 0L, force = lastParkMs == 0L)
     }
 
     // ── Logcat: AudioPolicyService's view of the assistant's uid ─────────────────
@@ -518,7 +533,7 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
             avaAppState = v
             if (v == 0 && was != 0) {
                 Log.i(TAG, "keepalive: assistant uid $uid silenced by the audio policy")
-                request("silenced", 500L)
+                request("silenced", 800L)
             }
         }
     }

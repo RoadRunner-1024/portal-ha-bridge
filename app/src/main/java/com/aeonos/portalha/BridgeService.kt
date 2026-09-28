@@ -1650,7 +1650,7 @@ class BridgeService : Service() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             })
         }.onFailure { Log.w(TAG, "reclaimForeground failed: ${it.message}") }
-        keepAlive?.request("dashboard reclaimed")   // the start just covered a parked assistant
+        keepAlive?.onDashboardStarted("dashboard reclaimed")   // the start just covered a parked assistant
     }
 
     private fun registerAudioReceiver() {
@@ -3393,7 +3393,7 @@ class BridgeService : Service() {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                     or Intent.FLAG_ACTIVITY_NO_ANIMATION))
         }
-        keepAlive?.request("dashboard to front")    // the start just covered a parked assistant
+        keepAlive?.onDashboardStarted("dashboard to front")    // the start just covered a parked assistant
         // The dashboard is now on top (behind the cover) — give it a moment to draw,
         // then fade the frozen snapshot out to reveal the identical live dashboard.
         wakeHandler.postDelayed({ hideWakeCover() }, 300L)
