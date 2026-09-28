@@ -3758,6 +3758,10 @@ class BridgeService : Service() {
     private fun checkScreenTimeout() {
         val p = prefs ?: return
         if (!p.screenTimeoutEnabled || !screenOn) return
+        // Someone's YouTube cast is playing. The cast screen's FLAG_KEEP_SCREEN_ON only blocks the
+        // OS timeout; this timer is ours and used to blank the video mid-programme. Holds the
+        // countdown at zero while it plays, so a paused video still sleeps on the usual schedule.
+        if (TvAppActivity.isPlayingVideo()) { lastActivityMs = System.currentTimeMillis(); return }
         // Presence (face or enhanced-sound) holds the screen awake and resets the countdown —
         // unless the user has asked for the screen to sleep on schedule regardless of whether
         // anyone is there. Presence is still computed and published either way.
