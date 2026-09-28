@@ -203,7 +203,14 @@ class NowPlayingOverlay(
         // Size art off the SHORTER edge so it stays sensible in portrait as well as landscape.
         val bigArt = (minOf(screenW, screenH) * 0.40f).toInt().coerceIn(dp(150), dp(340))
 
-        val r = FrameLayout(context)
+        // Every touch anywhere on the screen passes through here first: activity for the
+        // screen-off timer, whichever control (or none) ends up taking it.
+        val r = object : FrameLayout(context) {
+            override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+                BridgeService.noteTouch()
+                return super.dispatchTouchEvent(ev)
+            }
+        }
 
         // Background layer — restyled per mode (translucent dark ↔ opaque light).
         bgLayer = View(context)

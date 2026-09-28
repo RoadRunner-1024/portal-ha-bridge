@@ -135,6 +135,7 @@ class ScreensaverOverlay(private val context: Context) {
                 // Transparent catcher ABOVE the page: added last, so it wins every touch.
                 val catcher = View(context)
                 catcher.setOnTouchListener { v, e ->
+                    BridgeService.noteTouch()   // flicking through photos is using the screen
                     if (e.actionMasked == MotionEvent.ACTION_UP) onTap(e.x, v.width)
                     true
                 }

@@ -171,6 +171,7 @@ class TvAppActivity : Activity() {
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        BridgeService.noteTouch()   // activity for the screen-off timer
         gestures.onTouchEvent(ev)
         return super.dispatchTouchEvent(ev)
     }
