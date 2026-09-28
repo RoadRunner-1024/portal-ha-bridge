@@ -1286,9 +1286,19 @@ class BridgeService : Service() {
                         // Wake straight to the photos when asked. Revealed BEFORE the cover
                         // drops, so the hand-off is one composited step and the dashboard is
                         // never glimpsed on the way past.
+                        // ...unless a dismiss hold is running: HA just asked for the dashboard (a
+                        // camera pop-up, a navigate), and the wake that request caused must not
+                        // put the photos straight back over it. A prestaged frame then stays
+                        // concealed (and untouchable) until the slideshow timer brings it up.
+                        val held = System.currentTimeMillis() < screensaverHoldUntilMs
                         prefs?.let { pp ->
                             if (pp.screensaverEnabled && pp.screensaverOnWake &&
                                 pp.screensaverUrl.isNotBlank() && !userLeftDashboard) {
+                                if (held) {
+                                    Log.i(TAG, "screensaver: wake-to-photos skipped — dismiss hold for " +
+                                        "${(screensaverHoldUntilMs - System.currentTimeMillis()) / 1000}s more")
+                                    return@let
+                                }
                                 screensaver.show(pp.screensaverUrl) { exitScreensaver() }
                                 nowPlayingOverlay?.bringToFront()   // photos go under the music
                                 raiseTalkButtons()
