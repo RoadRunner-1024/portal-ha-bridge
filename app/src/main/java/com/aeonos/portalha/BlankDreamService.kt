@@ -37,6 +37,9 @@ class BlankDreamService : DreamService() {
 
         val black = View(this)
         black.setBackgroundColor(Color.BLACK)
+        // This is one of our windows too: a tap here restarts the screen-off timer and tells the
+        // knock detector the frame shook from a touch (a double tap to wake is not a knock).
+        black.setOnTouchListener { _, _ -> BridgeService.noteTouch(); false }
         black.setOnClickListener {
             Log.i(TAG, "dream: tapped — waking")
             finish()

@@ -304,6 +304,7 @@ Knock twice on the Portal's frame (two knocks 150–800 ms apart) and the **Knoc
 triggers:
   - trigger: state
     entity_id: event.<device>_knock
+    not_from: [unavailable, unknown]   # coming back online is not a knock
 conditions:
   - condition: state
     entity_id: event.<device>_knock
