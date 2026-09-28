@@ -330,6 +330,13 @@ class Prefs(private val context: Context) {
         get() = sp.getBoolean("ava_keep_alive", false)
         set(v) = sp.edit().putBoolean("ava_keep_alive", v).apply()
 
+    // Timed pause of the keep-alive for setup scripts (wall clock ms, 0 = none): off until then, then
+    // back on by itself - unlike avaKeepAlive=false, which stays off. adb DEBUG_CONFIG
+    // --ei keepAlivePauseMinutes N (max AvaKeepAlive.MAX_PAUSE_MINUTES; 0 ends it).
+    var keepAlivePausedUntil: Long
+        get() = sp.getLong("keep_alive_paused_until", 0L)
+        set(v) = sp.edit().putLong("keep_alive_paused_until", v.coerceAtLeast(0L)).apply()
+
     // Which assistant the keep-alive parks (its launcher activity). adb DEBUG_CONFIG --es keepAlivePackage.
     var keepAlivePackage: String
         get() = sp.getString("keep_alive_pkg", AvaKeepAlive.DEFAULT_PACKAGE) ?: AvaKeepAlive.DEFAULT_PACKAGE

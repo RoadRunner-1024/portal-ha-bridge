@@ -211,7 +211,8 @@ On Android 10 Portals (Portal 10", Mini) Meta's audio policy **silences the micr
 - Turn it on with the **Ava Keep-Alive** switch in HA (or the adb line below).
 - Needs freeform windowing, which Android reads **at boot**: `adb shell settings put global enable_freeform_support 1`, `adb shell settings put global force_resizable_activities 1`, then **reboot once**. (The bridge sets both itself when they're off - WRITE_SECURE_SETTINGS - and waits for the reboot; it checks that its parked window really is freeform before starting the assistant in it, so a full-screen assistant can never cover the dashboard.)
 - Switch: **Ava Keep-Alive** entity, or `adb shell am broadcast -a com.aeonos.portalha.DEBUG_CONFIG -p com.aeonos.portalha --ez avaKeepAlive false|true`. Another assistant: `--es keepAlivePackage <package>`. State: `--ez keepAliveStatus true` logs one `keepalive: status ...` line.
-- Pause it before driving the assistant's own UI (it runs in the parked window): switching it off removes the parked window.
+- Pause it before driving the assistant's own UI (it runs in the parked window): `--ei keepAlivePauseMinutes N` removes the parked window for N minutes (max 30) and the keep-alive comes back **by itself** when they run out, so an interrupted setup script can't leave the assistant deaf; `--ei keepAlivePauseMinutes 0` ends the pause early. The switch is untouched: switched off (HA or `--ez avaKeepAlive false`) stays off; switching it on ends a pause.
+- The corner overlay is re-copied every 3 s, and again 0.4, 1.2 and 2.5 s after each park, page change or wake, so a page still drawing when first copied doesn't stay frozen in the corner.
 
 ---
 

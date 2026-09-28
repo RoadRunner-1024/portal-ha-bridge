@@ -1030,7 +1030,10 @@ class BridgeService : Service() {
         lastActivityMs = System.currentTimeMillis()
         // Android 10: keep the external voice assistant (Ava) able to hear - see AvaKeepAlive.
         // Started here, before any photo/sleep overlay exists, so its corner cover sits below them.
-        keepAlive = AvaKeepAlive(this, keepAliveHost).also { it.start(p.avaKeepAlive, p.keepAlivePackage) }
+        // A timed setup pause survives a restart (an update mid-setup), clamped so it still ends.
+        val kaPause = AvaKeepAlive.clampPauseUntil(p.keepAlivePausedUntil)
+        if (kaPause != p.keepAlivePausedUntil) p.keepAlivePausedUntil = kaPause
+        keepAlive = AvaKeepAlive(this, keepAliveHost).also { it.start(p.avaKeepAlive, p.keepAlivePackage, kaPause) }
         reconcilePresence(p)
         reconcileDreamSlot(p)
         startDreamWatch()          // and take it back whenever the launcher grabs it
@@ -1838,16 +1841,34 @@ class BridgeService : Service() {
         debugConfigReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val p = prefs ?: return
-                // Android 10 assistant keep-alive (AvaKeepAlive). Setup-Ava pauses it around its UI
-                // automation of the assistant and switches it back on afterwards:
-                //   --ez avaKeepAlive false|true   --es keepAlivePackage com.example.ava
+                // Android 10 assistant keep-alive (AvaKeepAlive):
+                //   --ez avaKeepAlive false|true   the switch (HA "Ava Keep-Alive"); true also ends a pause
+                //   --ei keepAlivePauseMinutes N   timed pause for setup scripts driving the assistant's
+                //                                  own UI (e.g. a provisioning script): off now, back on BY ITSELF after N
+                //                                  minutes (max 30); 0 ends it now. The switch is untouched.
+                //                                  (--el / --es are accepted too.)
+                //   --es keepAlivePackage com.example.ava
                 //   --ez keepAliveStatus true      (logs one "keepalive: status ..." line)
                 if (intent.hasExtra("avaKeepAlive")) {
                     val on = intent.getBooleanExtra("avaKeepAlive", true)
                     p.avaKeepAlive = on
+                    if (on && p.keepAlivePausedUntil != 0L) { p.keepAlivePausedUntil = 0L; keepAlive?.pauseUntil(0L) }
                     keepAlive?.setEnabled(on)
                     publishAvaKeepAliveState(p)
                     Log.i(TAG, "config: ava keep-alive ${if (on) "ON" else "OFF"}")
+                }
+                if (intent.hasExtra("keepAlivePauseMinutes")) {
+                    @Suppress("DEPRECATION")
+                    val n = when (val v = intent.extras?.get("keepAlivePauseMinutes")) {
+                        is Number -> v.toLong()
+                        is String -> v.trim().toLongOrNull() ?: 0L
+                        else -> 0L
+                    }.coerceIn(0L, AvaKeepAlive.MAX_PAUSE_MINUTES.toLong())
+                    val until = if (n > 0L) System.currentTimeMillis() + n * 60_000L else 0L
+                    p.keepAlivePausedUntil = until
+                    keepAlive?.pauseUntil(until)
+                    Log.i(TAG, if (n > 0L) "config: ava keep-alive paused for $n min (switch ${if (p.avaKeepAlive) "on" else "off"})"
+                               else "config: ava keep-alive pause ended")
                 }
                 intent.getStringExtra("keepAlivePackage")?.let {
                     p.keepAlivePackage = it
@@ -2282,6 +2303,8 @@ class BridgeService : Service() {
 
     private fun handleAvaKeepAliveCommand(payload: String, p: Prefs) {
         val on = payload.equals("ON", ignoreCase = true)
+        // Switching it back on (off -> on) is explicit: it also ends a timed setup pause.
+        if (on && !p.avaKeepAlive && p.keepAlivePausedUntil != 0L) { p.keepAlivePausedUntil = 0L; keepAlive?.pauseUntil(0L) }
         if (on != p.avaKeepAlive) p.avaKeepAlive = on
         keepAlive?.setEnabled(on)
         publishAvaKeepAliveState(p)

@@ -13,6 +13,7 @@ import android.graphics.Point
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
@@ -65,7 +66,15 @@ import android.widget.ImageView
  * in a tight loop (minimum gap + rate limit with exponential backoff), and every park is logged with
  * its reason ("keepalive: park #n (<reason>) ...").
  *
- * A no-op below SDK 29, when the assistant isn't installed, or when [enabled] is off.
+ * The corner cover is re-copied every 3 s, plus a burst at +0.4/+1.2/+2.5 s after each park, page
+ * change, wake and cover show, so a page that was still drawing when it was first copied doesn't
+ * stay frozen in the corner. Copies run on a thread of their own (PixelCopy blocks its caller).
+ *
+ * Two ways to turn it off: the user's switch ([setEnabled], HA "Ava Keep-Alive"), which stays off,
+ * and a timed pause for setup scripts ([pauseUntil], at most [MAX_PAUSE_MINUTES]) that ends BY
+ * ITSELF, so a script interrupted while it drives the assistant's own UI can't leave it deaf.
+ *
+ * A no-op below SDK 29, when the assistant isn't installed, when the switch is off or paused.
  */
 class AvaKeepAlive(private val ctx: Context, private val host: Host) {
 
@@ -100,7 +109,16 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         private const val START_DELAY_MS = 6_000L
         private const val TICK_MS = 60_000L
         private const val COVER_TICK_MS = 1_000L
+        // Steady refresh of the corner cover. Not 1 s: every copy is real render-thread work
+        // (~7 ms on the Portal 10", shared with every window of the app), for a corner that
+        // rarely changes between page changes - which get the burst below.
         private const val COVER_REFRESH_MS = 3_000L
+        // Extra copies after a park, a page change or the cover coming up: the page drawing
+        // underneath settles within a couple of seconds.
+        private val COVER_BURST_MS = longArrayOf(400L, 1_200L, 2_500L)
+        /** Longest timed pause a setup script can ask for (minutes); longer requests are clamped. */
+        const val MAX_PAUSE_MINUTES = 30
+        private const val MAX_PAUSE_MS = MAX_PAUSE_MINUTES * 60_000L
         private const val MIN_GAP_MS = 5_000L
         private const val RATE_WINDOW_MS = 10 * 60_000L
         private const val RATE_MAX = 12
@@ -122,13 +140,31 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
             if (ka == null) { act.finishAndRemoveTask(); return }
             ka.hostResumed(act)
         }
+
+        /** The dashboard showed or finished loading a page: re-copy the corner cover as it settles. */
+        fun onDashboardContentChanged() { instance?.refreshCoverSoon() }
+
+        /**
+         * A stored pause end (wall clock, ms) made safe to use: 0 when it has passed (or none), and
+         * never more than [MAX_PAUSE_MINUTES] ahead (a clock that jumped back can't stretch it).
+         */
+        fun clampPauseUntil(untilMs: Long, nowMs: Long = System.currentTimeMillis()): Long = when {
+            untilMs <= nowMs -> 0L
+            untilMs > nowMs + MAX_PAUSE_MS -> nowMs + MAX_PAUSE_MS
+            else -> untilMs
+        }
     }
 
     private val main = Handler(Looper.getMainLooper())
     private val wm get() = ctx.getSystemService(WindowManager::class.java)
 
+    /** In effect: the user's switch is on and no timed pause is running. */
     @Volatile var enabled = false
         private set
+    // The user's switch (HA "Ava Keep-Alive"): only the user turns it back on.
+    @Volatile private var userEnabled = false
+    // Timed setup pause: wall-clock end (ms), 0 = none. Ends by itself (pauseEnd, tick, screen on).
+    @Volatile private var pausedUntil = 0L
     @Volatile private var pkg = DEFAULT_PACKAGE
     @Volatile private var component: ComponentName? = null
     @Volatile private var avaUid = -1
@@ -136,6 +172,8 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
 
     // Freeform: null = not seen yet, true = our task came up freeform, false = not active this boot.
     @Volatile private var freeformOk: Boolean? = null
+    // A park has been issued by this process (the first one clears a task left from an earlier one).
+    @Volatile private var parkedThisRun = false
 
     // What AudioPolicyService last said about the assistant's uid (-1 = nothing seen yet).
     @Volatile private var avaFg = -1
@@ -168,57 +206,127 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
     @Volatile private var lastCoverCopyMs = 0L
     private var sliver = Rect()
     private var coverRect = Rect()
+    private val burstToken = Any()
+    // PixelCopy cost (on the copy thread), for the status line.
+    @Volatile private var copyCount = 0
+    @Volatile private var copyTotalUs = 0L
+    @Volatile private var copyMaxUs = 0L
 
     val supported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
-    /** One line for logs / Setup-Ava: what the keep-alive is doing right now. */
+    /** Seconds left of a timed pause (0 = not paused). */
+    private fun pauseLeftSec(): Long {
+        val u = pausedUntil
+        return if (u == 0L) 0L else ((u - System.currentTimeMillis()).coerceAtLeast(0L) + 999L) / 1000L
+    }
+
+    /** One line for logs / setup scripts: what the keep-alive is doing right now. */
     fun status(): String {
         val now = SystemClock.elapsedRealtime()
         val ff = when (freeformOk) { true -> "ok"; false -> "inactive"; null -> "unknown" }
+        val n = copyCount
+        val avgMs = if (n == 0) 0.0 else copyTotalUs / n / 1000.0
         return "keepalive: status enabled=$enabled sdk=${Build.VERSION.SDK_INT} pkg=$pkg uid=$avaUid " +
             "installed=${component != null} freeform=$ff fg=$avaFg state=$avaAppState parks=$parkCount " +
             "inner=$innerCount lastPark=${if (lastParkMs == 0L) -1 else (now - lastParkMs) / 1000}s " +
-            "backoff=${if (backoffUntil > now) (backoffUntil - now) / 1000 else 0}s cover=$coverShown"
+            "backoff=${if (backoffUntil > now) (backoffUntil - now) / 1000 else 0}s cover=$coverShown " +
+            "switch=${if (userEnabled) "on" else "off"} paused=${pauseLeftSec()}s " +
+            "copies=$n copyAvg=${String.format(java.util.Locale.US, "%.1f", avgMs)}ms " +
+            "copyMax=${copyMaxUs / 1000}ms"
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-    fun start(on: Boolean, packageName: String) {
+    /** [pausedUntilMs]: a timed pause still running from before a restart (wall clock, 0 = none). */
+    fun start(on: Boolean, packageName: String, pausedUntilMs: Long = 0L) {
         instance = this
         pkg = packageName.ifBlank { DEFAULT_PACKAGE }
-        enabled = on
+        userEnabled = on
+        pausedUntil = clampPauseUntil(pausedUntilMs)
+        enabled = on && pausedUntil == 0L
         if (!supported) { Log.i(TAG, "keepalive: not needed on Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"); return }
         if (started) return
         started = true
         main.post { ensureCoverWindows() }
         main.postDelayed(tick, START_DELAY_MS)
         main.postDelayed(coverTick, START_DELAY_MS)
-        Log.i(TAG, "keepalive: service up (enabled=$on, package=$pkg)")
+        schedulePauseEnd()
+        Log.i(TAG, "keepalive: service up (enabled=$enabled, switch=${if (on) "on" else "off"}, " +
+            "paused=${pauseLeftSec()}s, package=$pkg)")
     }
 
     fun stop() {
         started = false
         main.removeCallbacks(tick); main.removeCallbacks(coverTick); main.removeCallbacks(attemptRunnable)
+        main.removeCallbacks(pauseEnd); main.removeCallbacksAndMessages(burstToken)
         stopLogReader()
-        main.post { removeCoverWindows() }
+        main.post {
+            removeCoverWindows()
+            copyThread?.quitSafely(); copyThread = null; copyHandler = null
+        }
         if (instance === this) instance = null
     }
 
+    /** The user's switch. Off stays off; on takes effect unless a timed pause is running. */
     fun setEnabled(on: Boolean) {
+        userEnabled = on
+        applyEnabled(if (on) "switch on" else "switch off")
+    }
+
+    /**
+     * Timed pause for setup scripts: off now, back on BY ITSELF at [untilMs] (wall clock, clamped to
+     * [MAX_PAUSE_MINUTES] ahead); 0 or a past time ends a pause now. The user's switch is untouched,
+     * so a switched-off keep-alive stays off when the pause ends.
+     */
+    fun pauseUntil(untilMs: Long) {
+        pausedUntil = clampPauseUntil(untilMs)
+        main.removeCallbacks(pauseEnd)
+        if (pausedUntil != 0L) {
+            Log.i(TAG, "keepalive: paused for ${pauseLeftSec()}s (setup) - back on by itself when it runs out")
+            schedulePauseEnd()
+            applyEnabled("paused")
+        } else {
+            applyEnabled("pause ended")
+        }
+    }
+
+    /** Recompute [enabled] from the switch and the pause, and act on a change. */
+    @Synchronized private fun applyEnabled(why: String) {
+        val on = userEnabled && pausedUntil == 0L
         if (on == enabled) return
         enabled = on
-        Log.i(TAG, "keepalive: ${if (on) "enabled" else "disabled"}")
+        Log.i(TAG, "keepalive: ${if (on) "enabled" else "disabled"} ($why)")
         if (!supported) return
         if (on) {
             main.post { ensureCoverWindows() }
-            request("enabled", 1_000L, force = true)
+            request(why, 1_000L, force = true)
         } else {
             main.removeCallbacks(attemptRunnable); pendingReason = null; pendingForced = false
             stopLogReader()
             main.post { setCoverVisible(false) }
             // Take the parked window away entirely: our task, and the assistant's activity in it.
-            removeOurTask("disabled")
+            removeOurTask(why)
         }
+    }
+
+    private val pauseEnd = Runnable { checkPauseEnd() }
+
+    private fun schedulePauseEnd() {
+        if (pausedUntil == 0L || !started) return
+        main.removeCallbacks(pauseEnd)
+        val left = (pausedUntil - System.currentTimeMillis()).coerceIn(0L, MAX_PAUSE_MS)
+        main.postDelayed(pauseEnd, left + 250L)
+    }
+
+    /** End a timed pause that has run out (called by its timer, and by the tick and screen on as backups). */
+    private fun checkPauseEnd() {
+        val u = pausedUntil
+        if (u == 0L) return
+        val c = clampPauseUntil(u)
+        if (c != 0L) { pausedUntil = c; schedulePauseEnd(); return }
+        pausedUntil = 0L
+        Log.i(TAG, "keepalive: setup pause ran out")
+        applyEnabled("setup pause ran out")
     }
 
     fun setPackage(p: String) {
@@ -262,13 +370,16 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
     fun onDashboardStarted(reason: String) = request(reason, 600L)
 
     fun onScreen(on: Boolean) {
+        if (on) main.post { checkPauseEnd() }
         if (on) request("screen on", 1_000L) else request("screen off", 1_200L)
         main.post { updateCover() }
+        if (on) refreshCoverSoon()
     }
 
     fun onDashboardResumed() {
         request("dashboard resumed", 500L)
         main.post { updateCover() }
+        refreshCoverSoon()
     }
 
     fun onDashboardPaused() {
@@ -297,23 +408,25 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         // Leave a finger alone: a park moves input focus (the keyboard would close mid-typing).
         val idleNeed = if (avaAppState == 0) TOUCH_IDLE_SILENCED_MS else TOUCH_IDLE_MS
         val touchAge = if (host.lastTouchElapsed == 0L) Long.MAX_VALUE else now - host.lastTouchElapsed
-        if (host.screenIsOn && touchAge < idleNeed) { retryIn(reason, idleNeed - touchAge + 200L); return }
-        if (now < backoffUntil) { retryIn(reason, backoffUntil - now); return }
+        if (host.screenIsOn && touchAge < idleNeed) { retryIn(reason, forced, idleNeed - touchAge + 200L); return }
+        if (now < backoffUntil) { retryIn(reason, forced, backoffUntil - now); return }
         val gap = now - lastParkMs
-        if (lastParkMs != 0L && gap < MIN_GAP_MS) { retryIn(reason, MIN_GAP_MS - gap); return }
+        if (lastParkMs != 0L && gap < MIN_GAP_MS) { retryIn(reason, forced, MIN_GAP_MS - gap); return }
         while (parkTimes.isNotEmpty() && now - parkTimes.first() > RATE_WINDOW_MS) parkTimes.removeFirst()
         if (parkTimes.size >= RATE_MAX) {
             backoffMs = if (backoffMs == 0L) BACKOFF_MIN_MS else (backoffMs * 2).coerceAtMost(BACKOFF_MAX_MS)
             backoffUntil = now + backoffMs
             Log.w(TAG, "keepalive: ${parkTimes.size} parks in ${RATE_WINDOW_MS / 60000} min - backing off ${backoffMs / 1000}s ($reason)")
-            retryIn(reason, backoffMs); return
+            retryIn(reason, forced, backoffMs); return
         }
         if (backoffMs != 0L && parkTimes.size <= RATE_MAX / 3) backoffMs = 0L
         park(reason)
     }
 
-    private fun retryIn(reason: String, ms: Long) {
+    /** Try again in [ms]; a forced attempt stays forced (it must not be dropped as "still visible"). */
+    private fun retryIn(reason: String, forced: Boolean, ms: Long) {
         if (pendingReason == null) pendingReason = reason
+        pendingForced = pendingForced || forced
         val d = ms.coerceIn(200L, BACKOFF_MAX_MS)
         pendingDueMs = SystemClock.elapsedRealtime() + d
         main.removeCallbacks(attemptRunnable)
@@ -334,16 +447,24 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         val bounds = launchBounds()
         // Same intent every time: with NEW_TASK an existing task whose root has this exact intent is
         // brought to the front as it is (the assistant on top, resumed) - no new instance.
+        // Except the FIRST park of this process: our task outlives a previous process of ours (an
+        // update, a crash) with only the assistant left in it, and bringing that back would never
+        // resume our activity - no freeform check, so no corner cover over a visible sliver. Clear
+        // it and start over inside it (the task keeps its freeform bounds).
+        val fresh = !parkedThisRun
         val intent = Intent(ctx, AvaKeepAliveActivity::class.java).addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
-        if (freeformOk == true) coverBeforePark()
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_NO_USER_ACTION or
+                (if (fresh) Intent.FLAG_ACTIVITY_CLEAR_TASK else 0))
+        if (freeformOk != false) coverBeforePark()
         val ok = runCatching { ctx.startActivity(intent, freeformOptions(bounds)) }
             .onFailure { Log.w(TAG, "keepalive: park failed: ${it.message}") }.isSuccess
         if (!ok) return
+        parkedThisRun = true
         val now = SystemClock.elapsedRealtime()
         lastParkMs = now; parkTimes.addLast(now); parkCount++
-        Log.i(TAG, "keepalive: park #$parkCount ($reason) fg=$avaFg state=$avaAppState screen=${if (host.screenIsOn) "on" else "off"}")
-        main.postDelayed({ updateCover(forceCopy = true) }, 400L)
+        Log.i(TAG, "keepalive: park #$parkCount ($reason${if (fresh) ", fresh task" else ""}) fg=$avaFg state=$avaAppState " +
+            "screen=${if (host.screenIsOn) "on" else "off"}")
+        refreshCoverSoon()
     }
 
     /** Our activity is on top of our task: check freeform, then put the assistant above it. */
@@ -453,6 +574,7 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
 
     private val tick = object : Runnable {
         override fun run() {
+            runCatching { checkPauseEnd() }   // backup for the pause timer
             runCatching { safetyCheck() }.onFailure { Log.w(TAG, "keepalive: check failed: ${it.message}") }
             main.postDelayed(this, TICK_MS)
         }
@@ -595,8 +717,10 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         coverView = null; guardView = null; coverLp = null; guardLp = null; coverShown = false
     }
 
+    // Freeform not confirmed yet counts: a parked sliver may already be on screen (harmless if not -
+    // the cover shows the very pixels behind it).
     private fun wantCover(): Boolean =
-        enabled && freeformOk == true && lastParkMs != 0L &&
+        enabled && freeformOk != false && lastParkMs != 0L &&
             host.screenIsOn && host.dashboardInFront && !host.fullScreenOverlayUp
 
     private fun updateCover(forceCopy: Boolean = false) {
@@ -604,11 +728,56 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
         if (want != coverShown) { setCoverVisible(want); return }
         if (!want) return
         val now = SystemClock.elapsedRealtime()
-        if (forceCopy || now - lastCoverCopyMs >= COVER_REFRESH_MS) {
-            lastCoverCopyMs = now
-            DashboardActivity.copyRegion(Rect(coverRect)) { bmp: Bitmap? ->
+        // -50 ms: the refresh must not slip a whole 1 s tick on jitter.
+        if (forceCopy || now - lastCoverCopyMs >= COVER_REFRESH_MS - 50L) copyCover()
+    }
+
+    /**
+     * Copy the dashboard pixels behind the corner into the cover. PixelCopy.request is synchronous
+     * up to Android 13 and, measured on the Portal 10", takes ~7 ms per copy on a settled page and
+     * up to ~100 ms while a page loads (it waits for the render thread) - so it runs on a thread of
+     * its own; only setting the bitmap happens on the main thread.
+     */
+    private fun copyCover() {
+        lastCoverCopyMs = SystemClock.elapsedRealtime()
+        val r = Rect(coverRect)
+        val h = copier() ?: return
+        h.post {
+            val t0 = SystemClock.elapsedRealtimeNanos()
+            DashboardActivity.copyRegion(r) { bmp: Bitmap? ->
                 if (bmp != null && coverShown) coverView?.setImageBitmap(bmp)
             }
+            val us = (SystemClock.elapsedRealtimeNanos() - t0) / 1000L
+            if (copyCount == Int.MAX_VALUE) { copyCount = 0; copyTotalUs = 0L }
+            copyCount++; copyTotalUs += us
+            if (us > copyMaxUs) copyMaxUs = us
+        }
+    }
+
+    private var copyThread: HandlerThread? = null
+    private var copyHandler: Handler? = null
+
+    private fun copier(): Handler? {
+        copyHandler?.let { return it }
+        if (!started) return null
+        return runCatching {
+            val t = HandlerThread("portal-ha-keepalive-copy").also { it.start() }
+            copyThread = t
+            Handler(t.looper).also { copyHandler = it }
+        }.getOrNull()
+    }
+
+    /**
+     * Re-copy the corner at +0.4, +1.2 and +2.5 s: after a park, a page change or the cover coming
+     * up, the page underneath may still be drawing, and the first copy would freeze it half-drawn
+     * until the next refresh. A new burst replaces one still running.
+     */
+    fun refreshCoverSoon() {
+        if (!supported || !started) return
+        main.post {
+            main.removeCallbacksAndMessages(burstToken)
+            val t0 = SystemClock.uptimeMillis()
+            for (d in COVER_BURST_MS) main.postAtTime({ updateCover(forceCopy = true) }, burstToken, t0 + d)
         }
     }
 
@@ -633,10 +802,8 @@ class AvaKeepAlive(private val ctx: Context, private val host: Host) {
             }
         }
         if (show) {
-            lastCoverCopyMs = SystemClock.elapsedRealtime()
-            DashboardActivity.copyRegion(Rect(coverRect)) { bmp: Bitmap? ->
-                if (bmp != null && coverShown) coverView?.setImageBitmap(bmp)
-            }
+            copyCover()
+            refreshCoverSoon()
         }
     }
 }

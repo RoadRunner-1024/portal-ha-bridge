@@ -53,13 +53,15 @@ class DashboardActivity : AppCompatActivity() {
          * PixelCopy of one rectangle of the dashboard window (window = screen coordinates: the
          * dashboard is full screen). AvaKeepAlive paints it over the parked assistant's corner
          * sliver so the corner looks exactly like the dashboard. Null when not possible.
+         * Callable from any thread (the copy blocks its caller until the render thread has done it);
+         * a bitmap is delivered on the main thread.
          */
         fun copyRegion(src: android.graphics.Rect, cb: (android.graphics.Bitmap?) -> Unit) {
             val act = instance
             if (act == null || src.width() <= 0 || src.height() <= 0) { cb(null); return }
             runCatching {
-                val v = act.window.decorView
-                if (!v.isAttachedToWindow || v.width < src.right || v.height < src.bottom) { cb(null); return }
+                val v = act.window.peekDecorView()
+                if (v == null || !v.isAttachedToWindow || v.width < src.right || v.height < src.bottom) { cb(null); return }
                 val bmp = android.graphics.Bitmap.createBitmap(
                     src.width(), src.height(), android.graphics.Bitmap.Config.ARGB_8888)
                 android.view.PixelCopy.request(act.window, src, bmp, { result ->
@@ -165,6 +167,10 @@ class DashboardActivity : AppCompatActivity() {
             }
             override fun onPageFinished(view: WebView, url: String) {
                 view.evaluateJavascript(alwaysVisibleJs(), null)
+                AvaKeepAlive.onDashboardContentChanged()   // re-copy the corner cover as the page settles
+            }
+            override fun onPageCommitVisible(view: WebView, url: String) {
+                AvaKeepAlive.onDashboardContentChanged()
             }
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
                 handler.proceed() // Accept self-signed certs for local HA
