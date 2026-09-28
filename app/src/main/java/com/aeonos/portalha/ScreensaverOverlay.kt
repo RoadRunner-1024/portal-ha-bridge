@@ -54,6 +54,8 @@ class ScreensaverOverlay(private val context: Context) {
     private var web: WebView? = null
     private var onExit: (() -> Unit)? = null
     @Volatile private var visible = false
+    // The window's params, kept so a concealed (prestaged) frame can be made untouchable.
+    private var winLp: WindowManager.LayoutParams? = null
 
     /** Photos are on screen right now. */
     val isShowing: Boolean get() = root != null && visible
@@ -95,11 +97,28 @@ class ScreensaverOverlay(private val context: Context) {
             val v = root ?: return@post
             if (visible == want) return@post
             visible = want
+            setTouchable(v, want)
             // No fade when concealing: that only happens behind a dark screen, where an
             // animation would just be work nobody can see.
             if (want) v.animate().alpha(1f).setDuration(FADE_MS).start() else v.alpha = 0f
             android.util.Log.i(TAG, "screensaver: ${if (want) "revealed (prestaged)" else "concealed"}")
         }
+    }
+
+    /**
+     * A concealed frame is alpha 0, but a window takes touches whatever its content's alpha - so a
+     * prestaged frame still on screen after a wake (wake-to-photos off, or a dismiss hold running)
+     * silently swallowed every tap meant for the dashboard underneath, left/right ones paging the
+     * invisible photos. Untouchable while concealed; touchable again when revealed.
+     */
+    private fun setTouchable(v: View, touchable: Boolean) {
+        val lp = winLp ?: return
+        val flags = if (touchable) lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            else lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        if (flags == lp.flags) return
+        lp.flags = flags
+        runCatching { wm.updateViewLayout(v, lp) }
+            .onFailure { android.util.Log.w(TAG, "screensaver: touchable=$touchable failed: ${it.message}") }
     }
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
@@ -135,6 +154,7 @@ class ScreensaverOverlay(private val context: Context) {
                 // Transparent catcher ABOVE the page: added last, so it wins every touch.
                 val catcher = View(context)
                 catcher.setOnTouchListener { v, e ->
+                    BridgeService.noteTouch()   // flicking through photos is using the screen
                     if (e.actionMasked == MotionEvent.ACTION_UP) onTap(e.x, v.width)
                     true
                 }
@@ -153,8 +173,11 @@ class ScreensaverOverlay(private val context: Context) {
                     PixelFormat.OPAQUE
                 )
                 lp.screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
+                // Staged out of sight: not touchable either (see setTouchable).
+                if (!showNow) lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
 
                 root = container
+                winLp = lp
                 web = wv
                 visible = showNow
                 container.alpha = 0f
@@ -167,6 +190,7 @@ class ScreensaverOverlay(private val context: Context) {
                 android.util.Log.w(TAG, "screensaver: show failed: ${it.message}")
                 root = null
                 web = null
+                winLp = null
                 visible = false
             }
         }
@@ -178,6 +202,7 @@ class ScreensaverOverlay(private val context: Context) {
             root = null
             onExit = null
             visible = false
+            winLp = null
             val wv = web
             web = null
             v.animate().alpha(0f).setDuration(FADE_MS).withEndAction {

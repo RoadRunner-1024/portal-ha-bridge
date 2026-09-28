@@ -255,7 +255,7 @@ Meta's face detection gets unreliable in **low light** — a person in a dark ro
 | **Wake** | `PowerManager` wake lock (`WAKE_LOCK` only) |
 | **Sleep** | `AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN` (no device admin) |
 
-Plus an on-device idle timer (**Screen Timeout** / **…Minutes**) that sleeps the screen independently of HA.
+Plus an on-device idle timer (**Screen Timeout** / **…Minutes**) that sleeps the screen independently of HA. Presence, a wake and any touch on the app's screens (dashboard, photos, now playing, talk buttons, settings) restart it, and it holds off while a YouTube cast is playing.
 
 ---
 

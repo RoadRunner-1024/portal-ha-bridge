@@ -153,6 +153,7 @@ class IntercomOverlay(
                 })
 
                 btn.setOnTouchListener { _, ev ->
+                    BridgeService.noteTouch()   // activity for the screen-off timer
                     gesture.onTouchEvent(ev)
                     val p = params ?: return@setOnTouchListener true
                     when (ev.actionMasked) {

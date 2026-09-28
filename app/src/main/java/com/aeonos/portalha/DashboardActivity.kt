@@ -245,13 +245,17 @@ class DashboardActivity : AppCompatActivity() {
     // who left — measured, and it silently defeated the first version of the steal detector.
     // dispatchTouchEvent/dispatchKeyEvent see real input only, including taps the WebView
     // consumes, so these are what tell a person apart from an app barging in.
+    // Both also count as activity for the screen-off timer (noteTouch): using the dashboard must
+    // keep the screen on. Keys included — the only ones a Portal has are its volume buttons.
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         BridgeService.noteUserInput()
+        BridgeService.noteTouch()
         return super.dispatchTouchEvent(ev)
     }
 
     override fun dispatchKeyEvent(ev: android.view.KeyEvent): Boolean {
         BridgeService.noteUserInput()
+        BridgeService.noteTouch()
         return super.dispatchKeyEvent(ev)
     }
 

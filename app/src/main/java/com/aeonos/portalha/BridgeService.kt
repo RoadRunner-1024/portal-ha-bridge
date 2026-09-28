@@ -304,6 +304,13 @@ class BridgeService : Service() {
         // nobody has touched anything yet.
         fun noteUserInput() { instance?.lastInputMs = System.currentTimeMillis() }
 
+        // A person touched one of OUR windows: the dashboard, the cast screen, a settings screen
+        // or one of our overlays (photos, now playing, talk buttons, the reply orb). That is
+        // activity for the on-device screen-off timer. It used to be reset only by presence,
+        // wakes and HA commands, so the screen could go dark under someone's finger while they
+        // were using the dashboard. Called for every touch event, so it must stay this cheap.
+        fun noteTouch() { instance?.lastActivityMs = System.currentTimeMillis() }
+
         // The foreground app changed (reported by ScreenAccessibility). Used to auto-return the
         // dashboard after the Meta Calls flow — see checkCallReturn.
         fun noteForegroundPackage(pkg: String) { instance?.onForegroundPackage(pkg) }
@@ -665,7 +672,12 @@ class BridgeService : Service() {
     // covers every settings screen without each one having to report in.
     @Volatile private var ourActivitiesResumed = 0
     private val ourActivityWatch = object : android.app.Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(a: android.app.Activity) { ourActivitiesResumed++ }
+        override fun onActivityResumed(a: android.app.Activity) {
+            ourActivitiesResumed++
+            // Settings screens and the like have no touch hook of their own; the dashboard and the
+            // cast screen do (dispatchTouchEvent), so they're left alone.
+            if (a !is DashboardActivity && a !is TvAppActivity) runCatching { noteTouchesOn(a.window) }
+        }
         override fun onActivityPaused(a: android.app.Activity) {
             if (ourActivitiesResumed > 0) ourActivitiesResumed--
         }
@@ -674,6 +686,23 @@ class BridgeService : Service() {
         override fun onActivityStopped(a: android.app.Activity) {}
         override fun onActivitySaveInstanceState(a: android.app.Activity, b: android.os.Bundle) {}
         override fun onActivityDestroyed(a: android.app.Activity) {}
+    }
+
+    // Route a window's touches past noteTouch() on their way in. Wrapping the Window.Callback
+    // covers every screen in one place instead of an override in each settings activity; the
+    // wrapper forwards everything else untouched, and is only ever applied once per window.
+    private fun noteTouchesOn(w: android.view.Window?) {
+        val cb = w?.callback ?: return
+        if (cb is TouchNotingCallback) return
+        w.callback = TouchNotingCallback(cb)
+    }
+
+    private class TouchNotingCallback(private val inner: android.view.Window.Callback) :
+        android.view.Window.Callback by inner {
+        override fun dispatchTouchEvent(event: android.view.MotionEvent?): Boolean {
+            BridgeService.noteTouch()
+            return inner.dispatchTouchEvent(event)
+        }
     }
 
     private fun noteForegroundStolen() {
@@ -1257,9 +1286,19 @@ class BridgeService : Service() {
                         // Wake straight to the photos when asked. Revealed BEFORE the cover
                         // drops, so the hand-off is one composited step and the dashboard is
                         // never glimpsed on the way past.
+                        // ...unless a dismiss hold is running: HA just asked for the dashboard (a
+                        // camera pop-up, a navigate), and the wake that request caused must not
+                        // put the photos straight back over it. A prestaged frame then stays
+                        // concealed (and untouchable) until the slideshow timer brings it up.
+                        val held = System.currentTimeMillis() < screensaverHoldUntilMs
                         prefs?.let { pp ->
                             if (pp.screensaverEnabled && pp.screensaverOnWake &&
                                 pp.screensaverUrl.isNotBlank() && !userLeftDashboard) {
+                                if (held) {
+                                    Log.i(TAG, "screensaver: wake-to-photos skipped — dismiss hold for " +
+                                        "${(screensaverHoldUntilMs - System.currentTimeMillis()) / 1000}s more")
+                                    return@let
+                                }
                                 screensaver.show(pp.screensaverUrl) { exitScreensaver() }
                                 nowPlayingOverlay?.bringToFront()   // photos go under the music
                                 raiseTalkButtons()
@@ -3729,6 +3768,10 @@ class BridgeService : Service() {
     private fun checkScreenTimeout() {
         val p = prefs ?: return
         if (!p.screenTimeoutEnabled || !screenOn) return
+        // Someone's YouTube cast is playing. The cast screen's FLAG_KEEP_SCREEN_ON only blocks the
+        // OS timeout; this timer is ours and used to blank the video mid-programme. Holds the
+        // countdown at zero while it plays, so a paused video still sleeps on the usual schedule.
+        if (TvAppActivity.isPlayingVideo()) { lastActivityMs = System.currentTimeMillis(); return }
         // Presence (face or enhanced-sound) holds the screen awake and resets the countdown —
         // unless the user has asked for the screen to sleep on schedule regardless of whether
         // anyone is there. Presence is still computed and published either way.

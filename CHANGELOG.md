@@ -4,6 +4,20 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## Unreleased
+
+**Fixed**
+- **The screen no longer goes dark while you're using it.** The on-device Screen Timeout only
+  restarted on presence and wakes; now any touch on the app's screens — the dashboard, the photo
+  screensaver, the now-playing screen, the talk buttons, the settings screens — restarts it too.
+- **A YouTube cast is no longer blanked mid-video** by the Screen Timeout. It holds off while a
+  cast is playing (a paused one still sleeps on schedule).
+- **Waking to photos respects a dismiss.** A Home Assistant dismiss (or its hold) that woke the
+  screen was undone by the wake itself, which put the photos straight back. It now waits for the
+  hold to end.
+- **A preloaded photo screensaver no longer eats taps.** With *Keep ready* on, the invisible,
+  preloaded photo page could sit over the dashboard after a wake and swallow every touch.
+
 ## v1.21.1 — Music and calls get along
 
 **Fixed**

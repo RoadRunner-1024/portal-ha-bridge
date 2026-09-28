@@ -59,7 +59,11 @@ class AnnounceOrbOverlay(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     flags, PixelFormat.TRANSLUCENT)
-                if (interactive) v.setOnClickListener { onTap?.invoke() }
+                if (interactive) {
+                    // Note the touch (screen-off timer), then let the click handling carry on.
+                    v.setOnTouchListener { _, _ -> BridgeService.noteTouch(); false }
+                    v.setOnClickListener { onTap?.invoke() }
+                }
                 // Apply any state set between show() and this post running.
                 v.live = lastLive; v.level = lastLevel; v.transmitting = lastTransmitting
                 view = v
