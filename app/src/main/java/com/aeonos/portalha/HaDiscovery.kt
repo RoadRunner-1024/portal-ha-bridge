@@ -65,6 +65,20 @@ object HaDiscovery {
         return """{"name":"HA Token","unique_id":"${deviceId}_hatoken","device":${device(deviceId, name)},"command_topic":"${haTokenCommandTopic(deviceId)}","mode":"password","max":255,"icon":"mdi:key","entity_category":"config"}"""
     }
 
+    // The dashboard the kiosk opens on, as a path on the Home Assistant at haUrl
+    // ("/dashboard-kitchen"; empty = haUrl as-is). Unlike the token this is not a secret, so it
+    // has a retained state topic and HA always shows what the Portal really uses.
+    fun dashboardPathDiscoveryTopic(deviceId: String) =
+        "homeassistant/text/${deviceId}_dashboard_path/config"
+
+    fun dashboardPathStateTopic(deviceId: String) = "portal/$deviceId/config/dashboard_path/state"
+    fun dashboardPathCommandTopic(deviceId: String) = "portal/$deviceId/config/dashboard_path/set"
+
+    fun dashboardPathConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Dashboard Path","unique_id":"${deviceId}_dashboard_path","device":${device(deviceId, name)},"state_topic":"${dashboardPathStateTopic(deviceId)}","command_topic":"${dashboardPathCommandTopic(deviceId)}","mode":"text","min":0,"max":255,"icon":"mdi:view-dashboard","entity_category":"config"}"""
+    }
+
     // ── Accelerometer ─────────────────────────────────────────────────────────
 
     fun accelDiscoveryTopic(deviceId: String, axis: String) =
@@ -487,6 +501,7 @@ object HaDiscovery {
         screenTimeoutCommandTopic(deviceId),
         screenTimeoutMinsCommandTopic(deviceId),
         tempOffsetCommandTopic(deviceId),
+        dashboardPathCommandTopic(deviceId),
         dlnaCommandTopic(deviceId),
         sendspinCommandTopic(deviceId),
         npOverlayCommandTopic(deviceId)

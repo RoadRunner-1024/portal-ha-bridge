@@ -48,6 +48,16 @@ class DashboardActivity : AppCompatActivity() {
                 }, android.os.Handler(android.os.Looper.getMainLooper()))
             }.onFailure { cb(null) }
         }
+
+        /**
+         * The home page changed (HA "Dashboard Path", DEBUG_CONFIG): load it now rather than at
+         * the next resume. Safe from any thread; a no-op when the dashboard isn't alive, since
+         * onCreate loads the current home anyway.
+         */
+        fun reloadHome() {
+            val act = instance ?: return
+            act.runOnUiThread { act.loadDashboard() }
+        }
     }
 
     private lateinit var webView: WebView
@@ -280,10 +290,11 @@ class DashboardActivity : AppCompatActivity() {
         // Re-acquire the camera if another app (e.g. the Portal launcher) took
         // it while we were in the background.
         BridgeService.ensureCamera(this)
-        // Reload if URL changed in settings
-        val url = prefs.haUrl
+        // Reload if the page wandered off home (a link out of Home Assistant) or home itself
+        // changed in settings. Home = <HA origin><dashboard path>, or haUrl when no path is set.
+        val home = homeUrl()
         val current = webView.url ?: ""
-        if (url.isNotEmpty() && !current.startsWith(normalise(url).trimEnd('/'))) {
+        if (home.isNotEmpty() && !DashboardUrls.isAtHome(current, home)) {
             loadDashboard()
         }
     }
@@ -363,8 +374,11 @@ class DashboardActivity : AppCompatActivity() {
         }
     }
 
+    /** Where the kiosk lives: haUrl's origin + the dashboard path (haUrl itself without one). */
+    private fun homeUrl(): String = DashboardUrls.home(prefs.haUrl, prefs.dashboardPath)
+
     private fun loadDashboard() {
-        val url = prefs.haUrl.trim()
+        val url = homeUrl()
         if (url.isEmpty()) {
             showPlaceholder(
                 "Swipe in from the <b>left edge</b> to open the menu, " +
@@ -385,13 +399,8 @@ class DashboardActivity : AppCompatActivity() {
                 android.util.Log.i("PortalHA", "webview: cleared HTTP cache for a fresh start")
                 webView.clearCache(true)
             }
-            webView.loadUrl(normalise(url))
+            webView.loadUrl(url)
         }
-    }
-
-    private fun normalise(url: String) = when {
-        url.startsWith("http://") || url.startsWith("https://") -> url
-        else -> "http://$url"
     }
 
     /**

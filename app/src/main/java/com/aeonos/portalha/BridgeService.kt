@@ -1855,6 +1855,7 @@ class BridgeService : Service() {
         //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_CONFIG \
         //     --es name Portal-Go --es broker 192.168.0.39 --ei port 1883 \
         //     --es user mqttuser --es haUrl http://192.168.0.39:8123
+        //     --es dashboardPath /dashboard-kitchen   (kiosk home on haUrl's HA; empty string = haUrl)
         // ★Deliberately NO password: it would sit in shell history and the device log. That one
         // stays a typed-in-person field.
         debugConfigReceiver = object : BroadcastReceiver() {
@@ -1867,6 +1868,10 @@ class BridgeService : Service() {
                 intent.getStringExtra("haUrl")?.let { p.haUrl = it; changed = true }
                 if (intent.hasExtra("port")) {
                     p.brokerPort = intent.getIntExtra("port", 1883); changed = true
+                }
+                // No reconnect needed: applied (and echoed to HA) like the HA text entity.
+                intent.getStringExtra("dashboardPath")?.let { path ->
+                    commandExecutor.submit { runCatching { handleDashboardPathCommand(path, p) } }
                 }
                 if (!changed) return
                 Log.i(TAG, "config: name='${p.deviceName}' broker='${p.brokerHost}:${p.brokerPort}' " +
@@ -2039,6 +2044,7 @@ class BridgeService : Service() {
             HaDiscovery.screenTimeoutMinsCommandTopic(p.deviceId),
             if (sensorBridge?.hasTemperature == true) HaDiscovery.tempOffsetCommandTopic(p.deviceId) else null,
             HaDiscovery.haTokenCommandTopic(p.deviceId),
+            HaDiscovery.dashboardPathCommandTopic(p.deviceId),
             HaDiscovery.dlnaCommandTopic(p.deviceId),
             HaDiscovery.sendspinCommandTopic(p.deviceId),
             HaDiscovery.npOverlayCommandTopic(p.deviceId)
@@ -2068,6 +2074,7 @@ class BridgeService : Service() {
         publishBrightnessState(p)
         publishDisplayStates(p)
         publishRaw(HaDiscovery.ipStateTopic(p.deviceId), localIp() ?: "unknown", 1, retained = true)
+        publishDashboardPathState(p)
         if (sensorBridge?.hasTemperature == true)
             publishRaw(HaDiscovery.tempOffsetStateTopic(p.deviceId), "%.1f".format(p.tempOffset), 1, retained = true)
         if (p.cameraServiceEnabled) {
@@ -2152,6 +2159,8 @@ class BridgeService : Service() {
         pub(HaDiscovery.brightnessDiscoveryTopic(p.deviceId), HaDiscovery.brightnessConfigPayload(p.deviceId, p.deviceName))
         // HA long-lived token, settable from HA (for the Jarvis tool-provider's smart-home control).
         pub(HaDiscovery.haTokenDiscoveryTopic(p.deviceId), HaDiscovery.haTokenConfigPayload(p.deviceId, p.deviceName))
+        // Kiosk home: which dashboard (path on haUrl's HA) the WebView opens on.
+        pub(HaDiscovery.dashboardPathDiscoveryTopic(p.deviceId), HaDiscovery.dashboardPathConfigPayload(p.deviceId, p.deviceName))
         // Music-speaker (DLNA) on/off, and the now-playing overlay on/off.
         pub(HaDiscovery.dlnaDiscoveryTopic(p.deviceId), HaDiscovery.dlnaConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.sendspinDiscoveryTopic(p.deviceId), HaDiscovery.sendspinConfigPayload(p.deviceId, p.deviceName))
@@ -2244,6 +2253,7 @@ class BridgeService : Service() {
             HaDiscovery.screenTimeoutMinsCommandTopic(p.deviceId) -> handleScreenTimeoutMinsCommand(payload, p)
             HaDiscovery.tempOffsetCommandTopic(p.deviceId)        -> handleTempOffsetCommand(payload, p)
             HaDiscovery.haTokenCommandTopic(p.deviceId)           -> handleHaTokenCommand(payload, p)
+            HaDiscovery.dashboardPathCommandTopic(p.deviceId)     -> handleDashboardPathCommand(payload, p)
             HaDiscovery.dlnaCommandTopic(p.deviceId)              -> handleDlnaCommand(payload, p)
             HaDiscovery.sendspinCommandTopic(p.deviceId)          -> handleSendspinCommand(payload, p)
             HaDiscovery.npOverlayCommandTopic(p.deviceId)         -> handleNpOverlayCommand(payload, p)
@@ -2544,6 +2554,25 @@ class BridgeService : Service() {
         p.haToken = token
         Log.i(TAG, "ha token set from Home Assistant (len=${token.length})")
     }
+
+    // Kiosk home page from HA ("Dashboard Path" text) or DEBUG_CONFIG. Anything that isn't a
+    // path (another scheme, too long) is refused and HA is shown the value still in use; a
+    // pasted full URL keeps only its path, since the kiosk only shows its own Home Assistant.
+    private fun handleDashboardPathCommand(payload: String, p: Prefs) {
+        val path = DashboardUrls.cleanPath(payload)
+        when {
+            path == null -> Log.w(TAG, "dashboard path: refused '$payload' (not a path)")
+            path != p.dashboardPath -> {
+                p.dashboardPath = path
+                Log.i(TAG, "dashboard path: '${p.dashboardPath}' -> ${DashboardUrls.home(p.haUrl, p.dashboardPath)}")
+                DashboardActivity.reloadHome()
+            }
+        }
+        publishDashboardPathState(p)
+    }
+
+    private fun publishDashboardPathState(p: Prefs) =
+        publishRaw(HaDiscovery.dashboardPathStateTopic(p.deviceId), p.dashboardPath, 1, retained = true)
 
     private fun hasReadLogs() =
         checkSelfPermission(android.Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
