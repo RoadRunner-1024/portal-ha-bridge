@@ -146,6 +146,15 @@ adb_cmd shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow        # overlay -> ba
 adb_cmd shell appops set "$PKG" REQUEST_INSTALL_PACKAGES allow   # in-app "Check for Updates"
 printf "%s  set WRITE_SETTINGS + SYSTEM_ALERT_WINDOW + REQUEST_INSTALL_PACKAGES = allow%s\n" "$C_GREEN" "$C_OFF"
 
+# Android 13+ (non-Portal tablets): a sideloaded app's AccessibilityService is blocked
+# behind "restricted settings", so writing enabled_accessibility_services doesn't stick
+# even with WRITE_SECURE_SETTINGS. Lifting it is what the user would do from App info.
+API="$(adb_cmd shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
+if [ -n "$API" ] && [ "$API" -ge 33 ] 2>/dev/null; then
+  adb_cmd shell appops set "$PKG" ACCESS_RESTRICTED_SETTINGS allow >/dev/null 2>&1
+  printf "%s  set ACCESS_RESTRICTED_SETTINGS = allow (Android 13+)%s\n" "$C_GREEN" "$C_OFF"
+fi
+
 # Portal OS "ambient display" timeout (plain system screen_off_timeout, 5 min out of the box).
 # It has NO effect while our dashboard is in front -- FLAG_KEEP_SCREEN_ON blocks that path -- so
 # this only shortens the windows where something else owns the screen, after a boot or a
@@ -153,8 +162,10 @@ printf "%s  set WRITE_SETTINGS + SYSTEM_ALERT_WINDOW + REQUEST_INSTALL_PACKAGES 
 # enough to keep winning; at 1 min the app is left alone on top. The same thing is available
 # in-app (Display and Presence -> "Shorten the Portal's own screen timeout"), which also restores
 # the old value; this just gives a freshly provisioned Portal a sane starting point.
+# Portal-only: on any other device it would just override the owner's timeout.
+MAKER="$(adb_cmd shell getprop ro.product.manufacturer 2>/dev/null | tr -d '\r\n')"
 OS_TIMEOUT="$(adb_cmd shell settings get system screen_off_timeout | tr -d '\r\n')"
-if [ "$OS_TIMEOUT" != "60000" ]; then
+if [ "$(printf %s "$MAKER" | tr '[:upper:]' '[:lower:]')" = "facebook" ] && [ "$OS_TIMEOUT" != "60000" ]; then
   adb_cmd shell settings put system screen_off_timeout 60000 >/dev/null 2>&1
   printf "%s  screen_off_timeout %s -> 60000 (was the OS ambient-display timeout)%s\n" \
     "$C_GREEN" "$OS_TIMEOUT" "$C_OFF"
@@ -165,7 +176,6 @@ fi
 # package-installer dialog to render white-on-white (invisible Install button).
 # Disabling it fixes the blank-installer issue; takes effect immediately, no
 # reboot required, and does not affect Shizuku.
-API="$(adb_cmd shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
 if [ -n "$API" ] && [ "$API" -lt 29 ] 2>/dev/null; then
   printf "%sGen-1 Portal+ detected (API %s) - disabling installer overlay...%s\n" "$C_CYAN" "$API" "$C_OFF"
   adb_cmd shell cmd overlay disable com.facebook.aloha.rro.niu.android >/dev/null 2>&1

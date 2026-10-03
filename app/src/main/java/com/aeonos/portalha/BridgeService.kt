@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.media.AudioRecordingConfiguration
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -25,6 +26,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import org.eclipse.paho.client.mqttv3.*
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import java.net.Inet4Address
@@ -665,7 +667,11 @@ class BridgeService : Service() {
     // covers every settings screen without each one having to report in.
     @Volatile private var ourActivitiesResumed = 0
     private val ourActivityWatch = object : android.app.Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(a: android.app.Activity) { ourActivitiesResumed++ }
+        override fun onActivityResumed(a: android.app.Activity) {
+            ourActivitiesResumed++
+            // Visible now, so camera/mic types refused at boot can be claimed.
+            if (fgsTypesMissing()) startForegroundTyped()
+        }
         override fun onActivityPaused(a: android.app.Activity) {
             if (ourActivitiesResumed > 0) ourActivitiesResumed--
         }
@@ -879,7 +885,7 @@ class BridgeService : Service() {
         super.onCreate()
         installRtspCrashGuard()
         createChannel()
-        startForeground(NOTIF_ID, notification("Starting…"))
+        startForegroundTyped()
         runCatching { application.registerActivityLifecycleCallbacks(ourActivityWatch) }
 
         val p = Prefs(this).also { prefs = it }
@@ -1307,7 +1313,7 @@ class BridgeService : Service() {
                 }
             }
         }
-        registerReceiver(screenReceiver, IntentFilter().apply {
+        registerExported(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)
@@ -1653,7 +1659,7 @@ class BridgeService : Service() {
                 }
             }
         }
-        registerReceiver(audioReceiver, IntentFilter().apply {
+        registerExported(audioReceiver, IntentFilter().apply {
             addAction(AudioManager.ACTION_MICROPHONE_MUTE_CHANGED)
             addAction("android.media.VOLUME_CHANGED_ACTION")
             addAction("android.media.STREAM_MUTE_CHANGED_ACTION")
@@ -1705,7 +1711,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(alexaTurnDoneReceiver, IntentFilter().apply {
+            registerExported(alexaTurnDoneReceiver, IntentFilter().apply {
                 addAction("com.amazon.alexa.multimodal.falcon.TURN_DONE")
             })
         }
@@ -1721,7 +1727,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugWakeReceiver, IntentFilter("com.aeonos.portalha.DEBUG_ALEXA_WAKE"))
+            registerExported(debugWakeReceiver, IntentFilter("com.aeonos.portalha.DEBUG_ALEXA_WAKE"))
         }
 
         // Debug: toggle experimental RTSP audio from adb (restarts the stream):
@@ -1742,7 +1748,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugAudioReceiver, IntentFilter("com.aeonos.portalha.DEBUG_STREAM_AUDIO"))
+            registerExported(debugAudioReceiver, IntentFilter("com.aeonos.portalha.DEBUG_STREAM_AUDIO"))
         }
 
         // Debug: exercise the auto-update prompt from adb. With extras, show the
@@ -1766,7 +1772,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugUpdateReceiver, IntentFilter("com.aeonos.portalha.DEBUG_UPDATE_PROMPT"))
+            registerExported(debugUpdateReceiver, IntentFilter("com.aeonos.portalha.DEBUG_UPDATE_PROMPT"))
         }
 
         // Debug: score the last ~2.4s of mic audio with the openWakeWord verifiers, so a
@@ -1782,7 +1788,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugOwwReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OWW_SCORE"))
+            registerExported(debugOwwReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OWW_SCORE"))
         }
 
         // Debug: configure and drive the photo screensaver without typing a URL on the panel.
@@ -1808,7 +1814,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugScreensaverReceiver, IntentFilter("com.aeonos.portalha.DEBUG_SCREENSAVER"))
+            registerExported(debugScreensaverReceiver, IntentFilter("com.aeonos.portalha.DEBUG_SCREENSAVER"))
         }
 
         // Debug: fill in the connection settings from adb, so a freshly provisioned Portal
@@ -1837,7 +1843,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugConfigReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CONFIG"))
+            registerExported(debugConfigReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CONFIG"))
         }
 
         // Debug: open a settings screen from adb. The settings activities are
@@ -1855,7 +1861,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugScreenReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OPEN_SCREEN"))
+            registerExported(debugScreenReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OPEN_SCREEN"))
         }
 
         // Debug: place an outbound Meta call from adb, e.g.:
@@ -1870,7 +1876,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugCallReceiver, IntentFilter("com.aeonos.portalha.DEBUG_PLACE_CALL"))
+            registerExported(debugCallReceiver, IntentFilter("com.aeonos.portalha.DEBUG_PLACE_CALL"))
         }
 
         // Debug: exercise the Calls auto-return without waiting the full minutes. The seconds
@@ -1884,7 +1890,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugCallReturnReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CALL_RETURN"))
+            registerExported(debugCallReturnReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CALL_RETURN"))
         }
 
         // Debug: inject a tap at a screen fraction to verify gesture dispatch / find the spot
@@ -1900,7 +1906,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugTapReceiver, IntentFilter("com.aeonos.portalha.DEBUG_TAP"))
+            registerExported(debugTapReceiver, IntentFilter("com.aeonos.portalha.DEBUG_TAP"))
         }
     }
 
@@ -4239,8 +4245,49 @@ class BridgeService : Service() {
             .build()
     }
 
-    private fun updateNotification(text: String) =
+    // targetSdk 34+ throws when a context-registered receiver for a non-system broadcast
+    // doesn't say whether other apps may reach it. Ours always could (Alexa's TURN_DONE,
+    // the adb DEBUG_* hooks), so keep them exported; a no-op before API 33.
+    private fun registerExported(r: BroadcastReceiver?, f: IntentFilter) =
+        ContextCompat.registerReceiver(this, r, f, ContextCompat.RECEIVER_EXPORTED)
+
+    // Android 14+ checks each foreground-service type against the permissions held right
+    // now, and refuses camera/microphone when the service starts from the background
+    // (e.g. BOOT_COMPLETED). Ask for what we hold; if that's refused, fall back to
+    // connectedDevice alone and claim the rest once one of our activities is resumed.
+    // The Portals (API 28/29) take the manifest types as before.
+    private var fgsTypes = 0
+    @Volatile private var notifText = "Starting…"
+
+    private fun wantedFgsTypes(): Int {
+        var t = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+            t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+            t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        return t
+    }
+
+    private fun fgsTypesMissing() =
+        Build.VERSION.SDK_INT >= 34 && wantedFgsTypes() and fgsTypes.inv() != 0
+
+    private fun startForegroundTyped() {
+        val n = notification(notifText)
+        if (Build.VERSION.SDK_INT < 34) { startForeground(NOTIF_ID, n); return }
+        val wanted = wantedFgsTypes()
+        fgsTypes = try {
+            startForeground(NOTIF_ID, n, wanted); wanted
+        } catch (e: SecurityException) {
+            Log.w(TAG, "fgs: types $wanted refused (${e.message}) — connectedDevice only for now")
+            val base = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            startForeground(NOTIF_ID, n, base); base
+        }
+    }
+
+    private fun updateNotification(text: String) {
+        notifText = text
         getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text))
+    }
 
     private fun sleep(ms: Long) =
         try { Thread.sleep(ms) } catch (e: InterruptedException) { Thread.currentThread().interrupt() }

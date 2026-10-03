@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!--
+        Android 14+ (API 34) only: each foregroundServiceType needs its own install-time
+        permission. Ignored on the Portals (API 28/29), which predate the enforcement.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -159,7 +165,7 @@
         <service
             android:name=".BridgeService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|camera" />
+            android:foregroundServiceType="connectedDevice|camera|microphone" />
 
         <!--
             Claims the dream slot with a blank screen. Meta's power policy starts a dream at the
