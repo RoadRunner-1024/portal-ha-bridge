@@ -162,8 +162,10 @@ fi
 # enough to keep winning; at 1 min the app is left alone on top. The same thing is available
 # in-app (Display and Presence -> "Shorten the Portal's own screen timeout"), which also restores
 # the old value; this just gives a freshly provisioned Portal a sane starting point.
+# Portal-only: on any other device it would just override the owner's timeout.
+MAKER="$(adb_cmd shell getprop ro.product.manufacturer 2>/dev/null | tr -d '\r\n')"
 OS_TIMEOUT="$(adb_cmd shell settings get system screen_off_timeout | tr -d '\r\n')"
-if [ "$OS_TIMEOUT" != "60000" ]; then
+if [ "$(printf %s "$MAKER" | tr '[:upper:]' '[:lower:]')" = "facebook" ] && [ "$OS_TIMEOUT" != "60000" ]; then
   adb_cmd shell settings put system screen_off_timeout 60000 >/dev/null 2>&1
   printf "%s  screen_off_timeout %s -> 60000 (was the OS ambient-display timeout)%s\n" \
     "$C_GREEN" "$OS_TIMEOUT" "$C_OFF"
