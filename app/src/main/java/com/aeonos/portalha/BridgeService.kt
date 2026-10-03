@@ -26,6 +26,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import org.eclipse.paho.client.mqttv3.*
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import java.net.Inet4Address
@@ -1312,7 +1313,7 @@ class BridgeService : Service() {
                 }
             }
         }
-        registerReceiver(screenReceiver, IntentFilter().apply {
+        registerExported(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)
@@ -1658,7 +1659,7 @@ class BridgeService : Service() {
                 }
             }
         }
-        registerReceiver(audioReceiver, IntentFilter().apply {
+        registerExported(audioReceiver, IntentFilter().apply {
             addAction(AudioManager.ACTION_MICROPHONE_MUTE_CHANGED)
             addAction("android.media.VOLUME_CHANGED_ACTION")
             addAction("android.media.STREAM_MUTE_CHANGED_ACTION")
@@ -1710,7 +1711,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(alexaTurnDoneReceiver, IntentFilter().apply {
+            registerExported(alexaTurnDoneReceiver, IntentFilter().apply {
                 addAction("com.amazon.alexa.multimodal.falcon.TURN_DONE")
             })
         }
@@ -1726,7 +1727,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugWakeReceiver, IntentFilter("com.aeonos.portalha.DEBUG_ALEXA_WAKE"))
+            registerExported(debugWakeReceiver, IntentFilter("com.aeonos.portalha.DEBUG_ALEXA_WAKE"))
         }
 
         // Debug: toggle experimental RTSP audio from adb (restarts the stream):
@@ -1747,7 +1748,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugAudioReceiver, IntentFilter("com.aeonos.portalha.DEBUG_STREAM_AUDIO"))
+            registerExported(debugAudioReceiver, IntentFilter("com.aeonos.portalha.DEBUG_STREAM_AUDIO"))
         }
 
         // Debug: exercise the auto-update prompt from adb. With extras, show the
@@ -1771,7 +1772,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugUpdateReceiver, IntentFilter("com.aeonos.portalha.DEBUG_UPDATE_PROMPT"))
+            registerExported(debugUpdateReceiver, IntentFilter("com.aeonos.portalha.DEBUG_UPDATE_PROMPT"))
         }
 
         // Debug: score the last ~2.4s of mic audio with the openWakeWord verifiers, so a
@@ -1787,7 +1788,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugOwwReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OWW_SCORE"))
+            registerExported(debugOwwReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OWW_SCORE"))
         }
 
         // Debug: configure and drive the photo screensaver without typing a URL on the panel.
@@ -1813,7 +1814,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugScreensaverReceiver, IntentFilter("com.aeonos.portalha.DEBUG_SCREENSAVER"))
+            registerExported(debugScreensaverReceiver, IntentFilter("com.aeonos.portalha.DEBUG_SCREENSAVER"))
         }
 
         // Debug: fill in the connection settings from adb, so a freshly provisioned Portal
@@ -1842,7 +1843,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugConfigReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CONFIG"))
+            registerExported(debugConfigReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CONFIG"))
         }
 
         // Debug: open a settings screen from adb. The settings activities are
@@ -1860,7 +1861,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugScreenReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OPEN_SCREEN"))
+            registerExported(debugScreenReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OPEN_SCREEN"))
         }
 
         // Debug: place an outbound Meta call from adb, e.g.:
@@ -1875,7 +1876,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugCallReceiver, IntentFilter("com.aeonos.portalha.DEBUG_PLACE_CALL"))
+            registerExported(debugCallReceiver, IntentFilter("com.aeonos.portalha.DEBUG_PLACE_CALL"))
         }
 
         // Debug: exercise the Calls auto-return without waiting the full minutes. The seconds
@@ -1889,7 +1890,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugCallReturnReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CALL_RETURN"))
+            registerExported(debugCallReturnReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CALL_RETURN"))
         }
 
         // Debug: inject a tap at a screen fraction to verify gesture dispatch / find the spot
@@ -1905,7 +1906,7 @@ class BridgeService : Service() {
             }
         }
         runCatching {
-            registerReceiver(debugTapReceiver, IntentFilter("com.aeonos.portalha.DEBUG_TAP"))
+            registerExported(debugTapReceiver, IntentFilter("com.aeonos.portalha.DEBUG_TAP"))
         }
     }
 
@@ -4243,6 +4244,12 @@ class BridgeService : Service() {
             .setOngoing(true)
             .build()
     }
+
+    // targetSdk 34+ throws when a context-registered receiver for a non-system broadcast
+    // doesn't say whether other apps may reach it. Ours always could (Alexa's TURN_DONE,
+    // the adb DEBUG_* hooks), so keep them exported; a no-op before API 33.
+    private fun registerExported(r: BroadcastReceiver?, f: IntentFilter) =
+        ContextCompat.registerReceiver(this, r, f, ContextCompat.RECEIVER_EXPORTED)
 
     // Android 14+ checks each foreground-service type against the permissions held right
     // now, and refuses camera/microphone when the service starts from the background
