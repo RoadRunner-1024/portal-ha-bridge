@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.media.AudioRecordingConfiguration
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -665,7 +666,11 @@ class BridgeService : Service() {
     // covers every settings screen without each one having to report in.
     @Volatile private var ourActivitiesResumed = 0
     private val ourActivityWatch = object : android.app.Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(a: android.app.Activity) { ourActivitiesResumed++ }
+        override fun onActivityResumed(a: android.app.Activity) {
+            ourActivitiesResumed++
+            // Visible now, so camera/mic types refused at boot can be claimed.
+            if (fgsTypesMissing()) startForegroundTyped()
+        }
         override fun onActivityPaused(a: android.app.Activity) {
             if (ourActivitiesResumed > 0) ourActivitiesResumed--
         }
@@ -879,7 +884,7 @@ class BridgeService : Service() {
         super.onCreate()
         installRtspCrashGuard()
         createChannel()
-        startForeground(NOTIF_ID, notification("Starting…"))
+        startForegroundTyped()
         runCatching { application.registerActivityLifecycleCallbacks(ourActivityWatch) }
 
         val p = Prefs(this).also { prefs = it }
@@ -4239,8 +4244,43 @@ class BridgeService : Service() {
             .build()
     }
 
-    private fun updateNotification(text: String) =
+    // Android 14+ checks each foreground-service type against the permissions held right
+    // now, and refuses camera/microphone when the service starts from the background
+    // (e.g. BOOT_COMPLETED). Ask for what we hold; if that's refused, fall back to
+    // connectedDevice alone and claim the rest once one of our activities is resumed.
+    // The Portals (API 28/29) take the manifest types as before.
+    private var fgsTypes = 0
+    @Volatile private var notifText = "Starting…"
+
+    private fun wantedFgsTypes(): Int {
+        var t = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+            t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+            t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        return t
+    }
+
+    private fun fgsTypesMissing() =
+        Build.VERSION.SDK_INT >= 34 && wantedFgsTypes() and fgsTypes.inv() != 0
+
+    private fun startForegroundTyped() {
+        val n = notification(notifText)
+        if (Build.VERSION.SDK_INT < 34) { startForeground(NOTIF_ID, n); return }
+        val wanted = wantedFgsTypes()
+        fgsTypes = try {
+            startForeground(NOTIF_ID, n, wanted); wanted
+        } catch (e: SecurityException) {
+            Log.w(TAG, "fgs: types $wanted refused (${e.message}) — connectedDevice only for now")
+            val base = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            startForeground(NOTIF_ID, n, base); base
+        }
+    }
+
+    private fun updateNotification(text: String) {
+        notifText = text
         getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text))
+    }
 
     private fun sleep(ms: Long) =
         try { Thread.sleep(ms) } catch (e: InterruptedException) { Thread.currentThread().interrupt() }
