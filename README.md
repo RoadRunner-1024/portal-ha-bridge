@@ -31,7 +31,10 @@ Everything below appears automatically as one HA **device** (named whatever you 
 | **Temperature** + **Temperature Offset** | sensor + number | only on models with an ambient-temp sensor |
 | **Sound Level** | sensor | 0–100 ambient loudness (amplitude only, audio never stored) |
 | **Tap** / **Tilt** | sensor | knock/tilt gesture direction (`left/right/up/down/front/back`) |
-| **Tap/Tilt Sensitivity** | number | threshold slider |
+| **Tap/Tilt Sensitivity** | number | threshold slider (also used by **Knock**) |
+| **Knock** | event | `double_knock` — two knocks on the frame ([Double knock](#double-knock)) |
+| **Dashboard Path** | text | which dashboard the kiosk opens on ([Kiosk pages and navigation](#kiosk-pages-and-navigation)) |
+| **Navigate** | text | show any HA page on this Portal now, optionally for N seconds (same section) |
 | **Accel X / Y / Z** | sensors | raw accelerometer |
 | **Brightness** | number | screen brightness 0–100 |
 | **Volume** + **Volume Mute** | number + switch | media volume |
@@ -255,7 +258,59 @@ Meta's face detection gets unreliable in **low light** — a person in a dark ro
 | **Wake** | `PowerManager` wake lock (`WAKE_LOCK` only) |
 | **Sleep** | `AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN` (no device admin) |
 
-Plus an on-device idle timer (**Screen Timeout** / **…Minutes**) that sleeps the screen independently of HA.
+Plus an on-device idle timer (**Screen Timeout** / **…Minutes**) that sleeps the screen independently of HA. Presence, a wake and any touch on the app's screens (dashboard, photos, now playing, talk buttons, settings) restart it, and it holds off while a YouTube cast is playing.
+
+---
+
+## Kiosk pages and navigation
+
+**Dashboard Path** (text entity, config) picks the dashboard the kiosk opens on, as a path on your Home Assistant: `/dashboard-kitchen`, `/lovelace/cameras`. The app loads `<HA URL origin><path>`; empty = the HA URL exactly as before. Keep the HA URL in settings as the plain address (`http://192.168.1.5:8123`) — it is also the base for the app's REST calls. Also settable over adb: `adb shell am broadcast -a com.aeonos.portalha.DEBUG_CONFIG --es dashboardPath /dashboard-kitchen`.
+
+**Navigate** puts any page of the same Home Assistant on the Portal right now — a camera view when the doorbell rings — in the dashboard's own web view (no other app, so the camera keeps streaming):
+
+| Topic | Who |
+|---|---|
+| `portal/<device_id>/navigate` | one Portal (the **Navigate** text entity) |
+| `portal/navigate` | every Portal at once (**Navigate (All Portals)** on the *Portal Fleet* device) |
+| `portal/<device_id>/navigate/state` | retained: the path being shown, empty while home |
+
+Payload: a path, or JSON:
+
+```json
+{"path": "/home-cameras/front_doorbell", "seconds": 180, "dismiss": true}
+```
+
+- `seconds` — go back to the dashboard path afterwards (default `0` = stay). Put off while someone is using the page, until 15 s without a touch.
+- `dismiss` (default `true`) — wake the screen, take the photo screensaver down and hold it off for `seconds` (the *Screensaver Dismiss Hold* when 0), bring the dashboard to the front. `false` only changes the page, silently.
+- `home` (or an empty payload) — back to the dashboard path now.
+
+It's ignored during a call (ringing too) and while a YouTube cast is on screen. Don't publish to these topics with *retain* — a Portal would re-navigate on every reconnect.
+
+```yaml
+# Doorbell pressed: show the door camera on every Portal for 3 minutes
+action: mqtt.publish
+data:
+  topic: portal/navigate
+  payload: '{"path": "/home-cameras/front_doorbell", "seconds": 180}'
+```
+
+---
+
+## Double knock
+
+Knock twice on the Portal's frame (two knocks 150–800 ms apart) and the **Knock** event entity fires `double_knock` — a physical button for any automation. After one it waits 5 s, so a triple knock fires once. Taps on the screen shake the frame too, so a double knock within 400 ms of a touch on any of the app's screens is ignored. The threshold is the **Tap Sensitivity** number (the Tap sensor itself is unchanged).
+
+```yaml
+triggers:
+  - trigger: state
+    entity_id: event.<device>_knock
+    not_from: [unavailable, unknown]   # coming back online is not a knock
+conditions:
+  - condition: state
+    entity_id: event.<device>_knock
+    attribute: event_type
+    state: double_knock
+```
 
 ---
 

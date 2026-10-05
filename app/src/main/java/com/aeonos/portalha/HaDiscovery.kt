@@ -65,6 +65,20 @@ object HaDiscovery {
         return """{"name":"HA Token","unique_id":"${deviceId}_hatoken","device":${device(deviceId, name)},"command_topic":"${haTokenCommandTopic(deviceId)}","mode":"password","max":255,"icon":"mdi:key","entity_category":"config"}"""
     }
 
+    // The dashboard the kiosk opens on, as a path on the Home Assistant at haUrl
+    // ("/dashboard-kitchen"; empty = haUrl as-is). Unlike the token this is not a secret, so it
+    // has a retained state topic and HA always shows what the Portal really uses.
+    fun dashboardPathDiscoveryTopic(deviceId: String) =
+        "homeassistant/text/${deviceId}_dashboard_path/config"
+
+    fun dashboardPathStateTopic(deviceId: String) = "portal/$deviceId/config/dashboard_path/state"
+    fun dashboardPathCommandTopic(deviceId: String) = "portal/$deviceId/config/dashboard_path/set"
+
+    fun dashboardPathConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Dashboard Path","unique_id":"${deviceId}_dashboard_path","device":${device(deviceId, name)},"state_topic":"${dashboardPathStateTopic(deviceId)}","command_topic":"${dashboardPathCommandTopic(deviceId)}","mode":"text","min":0,"max":255,"icon":"mdi:view-dashboard","entity_category":"config"}"""
+    }
+
     // ── Accelerometer ─────────────────────────────────────────────────────────
 
     fun accelDiscoveryTopic(deviceId: String, axis: String) =
@@ -120,6 +134,22 @@ object HaDiscovery {
     fun sensitivityConfigPayload(deviceId: String, deviceName: String): String {
         val name = deviceName.escape()
         return """{"name":"$tapLabel Sensitivity","unique_id":"${deviceId}_tap_sensitivity","device":${device(deviceId, name)},"state_topic":"${sensitivityStateTopic(deviceId)}","command_topic":"${sensitivityCommandTopic(deviceId)}","min":2.0,"max":15.0,"step":0.5,"mode":"slider","icon":"$tapSensIcon"}"""
+    }
+
+    // ── Double knock (event entity) ───────────────────────────────────────────
+    // Two knocks on the frame 150-800 ms apart, then 5 s of cooldown; ignored when the screen was
+    // touched around them. Uses the Tap Sensitivity threshold. Payload:
+    // {"event_type":"double_knock","gap_ms":N}. Never retained - an event replayed at every
+    // reconnect would fire automations.
+
+    fun knockDiscoveryTopic(deviceId: String) =
+        "homeassistant/event/${deviceId}_knock/config"
+
+    fun knockStateTopic(deviceId: String) = "portal/$deviceId/event/knock"
+
+    fun knockConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Knock","unique_id":"${deviceId}_knock","device":${device(deviceId, name)},"state_topic":"${knockStateTopic(deviceId)}","event_types":["double_knock"],"icon":"mdi:gesture-double-tap"}"""
     }
 
     // ── Sound level sensor ────────────────────────────────────────────────────
@@ -307,6 +337,34 @@ object HaDiscovery {
     fun fleetScreensaverDismissConfigPayload(): String =
         """{"name":"Dismiss Screensaver (All Portals)","unique_id":"${FLEET_DEVICE_ID}_screensaver_dismiss","device":{"identifiers":["$FLEET_DEVICE_ID"],"name":"Portal Fleet","model":"Meta Portal","manufacturer":"Meta"},"command_topic":"$SCREENSAVER_FLEET_DISMISS_TOPIC","payload_press":"dismiss","icon":"mdi:image-off-outline"}"""
 
+    // ── Navigate: show any HA page on the Portal ──────────────────────────────
+    // Payload: a path ("/home-cameras/front_doorbell"), or JSON
+    // {"path":"/x","seconds":180,"dismiss":true}; "home" or "" goes back to the dashboard path.
+    // State = the path a navigate is showing, "" while home. See BridgeService.handleNavigateCommand.
+
+    fun navigateCommandTopic(deviceId: String) = "portal/$deviceId/navigate"
+    fun navigateStateTopic(deviceId: String) = "portal/$deviceId/navigate/state"
+
+    fun navigateDiscoveryTopic(deviceId: String) =
+        "homeassistant/text/${deviceId}_navigate/config"
+
+    fun navigateConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Navigate","unique_id":"${deviceId}_navigate","device":${device(deviceId, name)},"state_topic":"${navigateStateTopic(deviceId)}","command_topic":"${navigateCommandTopic(deviceId)}","mode":"text","min":0,"max":255,"icon":"mdi:compass-outline"}"""
+    }
+
+    /** Fleet-wide navigate: one publish moves every Portal (same idea as the fleet dismiss). */
+    const val NAVIGATE_FLEET_TOPIC = "portal/navigate"
+
+    // Same trick as the fleet dismiss button: identical retained config from every Portal, one
+    // entity on the synthetic "Portal Fleet" device. Optimistic (no state): each Portal tracks
+    // its own navigation.
+    fun fleetNavigateDiscoveryTopic() =
+        "homeassistant/text/${FLEET_DEVICE_ID}_navigate/config"
+
+    fun fleetNavigateConfigPayload(): String =
+        """{"name":"Navigate (All Portals)","unique_id":"${FLEET_DEVICE_ID}_navigate","device":{"identifiers":["$FLEET_DEVICE_ID"],"name":"Portal Fleet","model":"Meta Portal","manufacturer":"Meta"},"command_topic":"$NAVIGATE_FLEET_TOPIC","mode":"text","min":0,"max":255,"icon":"mdi:compass"}"""
+
     // ── Screen brightness number (slider) ─────────────────────────────────────
 
     fun brightnessDiscoveryTopic(deviceId: String) =
@@ -487,6 +545,8 @@ object HaDiscovery {
         screenTimeoutCommandTopic(deviceId),
         screenTimeoutMinsCommandTopic(deviceId),
         tempOffsetCommandTopic(deviceId),
+        dashboardPathCommandTopic(deviceId),
+        navigateCommandTopic(deviceId),
         dlnaCommandTopic(deviceId),
         sendspinCommandTopic(deviceId),
         npOverlayCommandTopic(deviceId)

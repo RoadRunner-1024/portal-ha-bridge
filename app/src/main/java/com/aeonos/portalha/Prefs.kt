@@ -333,6 +333,15 @@ class Prefs(private val context: Context) {
         get() = sp.getString("ha_url", "") ?: ""
         set(v) = sp.edit().putString("ha_url", v).apply()
 
+    // The dashboard the kiosk opens on, as a path on that Home Assistant: "/dashboard-kitchen",
+    // "/lovelace/cameras". Blank = haUrl as-is, exactly as before. Kept apart from haUrl on
+    // purpose: haUrl is also the REST base for MaControl and AssistantToolProvider, so it has to
+    // stay the plain origin. Stored cleaned (see DashboardUrls.cleanPath); anything that isn't a
+    // path is stored as blank. Settable from HA ("Dashboard Path" text) and DEBUG_CONFIG.
+    var dashboardPath: String
+        get() = sp.getString("dashboard_path", "") ?: ""
+        set(v) = sp.edit().putString("dashboard_path", DashboardUrls.cleanPath(v) ?: "").apply()
+
     // Long-lived access token for Home Assistant's REST API, used by the Jarvis
     // tool-provider (AssistantToolProvider) for the smart-home passthrough. Create
     // one in HA: Profile -> Long-Lived Access Tokens. Stays on-device, never leaves.

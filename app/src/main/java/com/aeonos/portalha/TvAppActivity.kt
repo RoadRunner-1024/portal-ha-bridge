@@ -46,6 +46,9 @@ class TvAppActivity : Activity() {
         private const val POLL_MS = 5_000L          // playback/exit re-check cadence
         private const val DISCONNECT_GRACE_MS = 10_000L  // remotes==0 + not playing this long → exit
         private const val IDLE_EXIT_MS = 5 * 60_000L     // nothing played this long → exit
+        // "Playing" = a video was seen playing within this long (three polls, so one slow or
+        // missed evaluateJavascript round doesn't flip it).
+        private const val PLAYING_FRESH_MS = 3 * POLL_MS
 
         // Live instance so BridgeService can close us when the phone disconnects
         // (same pattern as BridgeService.instance). Cleared in onDestroy.
@@ -53,6 +56,17 @@ class TvAppActivity : Activity() {
 
         /** True while the YouTube screen is up (DIAL app state for the phone). */
         fun isShowing(): Boolean = instance != null
+
+        /**
+         * True while the YouTube screen is up and a video is actually playing (or just about to:
+         * a fresh cast counts from its launch). The on-device screen-off timer holds off for
+         * this - FLAG_KEEP_SCREEN_ON only stops the OS timeout, not ours. A video left paused
+         * lets the countdown run again from the last moment it played.
+         */
+        fun isPlayingVideo(): Boolean {
+            val a = instance ?: return false
+            return System.currentTimeMillis() - a.lastPlayingMs < PLAYING_FRESH_MS
+        }
 
         /** Bring up the YouTube screen with the DIAL launch params (pairingCode=…). */
         fun launch(ctx: Context, query: String) {
@@ -171,6 +185,7 @@ class TvAppActivity : Activity() {
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        BridgeService.noteTouch()   // activity for the screen-off timer
         gestures.onTouchEvent(ev)
         return super.dispatchTouchEvent(ev)
     }
