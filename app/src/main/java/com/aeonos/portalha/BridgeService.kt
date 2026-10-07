@@ -1720,9 +1720,7 @@ class BridgeService : Service() {
                 fireAlexaHandoff()
             }
         }
-        runCatching {
-            registerReceiver(debugWakeReceiver, IntentFilter("com.aeonos.portalha.DEBUG_ALEXA_WAKE"))
-        }
+        registerDebugReceiver(debugWakeReceiver, "com.aeonos.portalha.DEBUG_ALEXA_WAKE")
 
         // Debug: toggle experimental RTSP audio from adb (restarts the stream):
         //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_STREAM_AUDIO --ez on true
@@ -1741,9 +1739,7 @@ class BridgeService : Service() {
                 }
             }
         }
-        runCatching {
-            registerReceiver(debugAudioReceiver, IntentFilter("com.aeonos.portalha.DEBUG_STREAM_AUDIO"))
-        }
+        registerDebugReceiver(debugAudioReceiver, "com.aeonos.portalha.DEBUG_STREAM_AUDIO")
 
         // Debug: exercise the auto-update prompt from adb. With extras, show the
         // dialog with that content (pure UI smoke test); without extras, run a REAL
@@ -1765,9 +1761,7 @@ class BridgeService : Service() {
                     .putExtra(UpdatePromptActivity.EXTRA_APK_URL, intent.getStringExtra("apkUrl") ?: ""))
             }
         }
-        runCatching {
-            registerReceiver(debugUpdateReceiver, IntentFilter("com.aeonos.portalha.DEBUG_UPDATE_PROMPT"))
-        }
+        registerDebugReceiver(debugUpdateReceiver, "com.aeonos.portalha.DEBUG_UPDATE_PROMPT")
 
         // Debug: score the last ~2.4s of mic audio with the openWakeWord verifiers, so a
         // room's noise floor and a real utterance can be compared when picking a threshold:
@@ -1781,9 +1775,7 @@ class BridgeService : Service() {
                 }, "portal-ha-oww-debug").also { it.isDaemon = true }.start()
             }
         }
-        runCatching {
-            registerReceiver(debugOwwReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OWW_SCORE"))
-        }
+        registerDebugReceiver(debugOwwReceiver, "com.aeonos.portalha.DEBUG_OWW_SCORE")
 
         // Debug: configure and drive the photo screensaver without typing a URL on the panel.
         //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_SCREENSAVER --es url http://host:8355
@@ -1807,9 +1799,7 @@ class BridgeService : Service() {
                 }
             }
         }
-        runCatching {
-            registerReceiver(debugScreensaverReceiver, IntentFilter("com.aeonos.portalha.DEBUG_SCREENSAVER"))
-        }
+        registerDebugReceiver(debugScreensaverReceiver, "com.aeonos.portalha.DEBUG_SCREENSAVER")
 
         // Debug: fill in the connection settings from adb, so a freshly provisioned Portal
         // doesn't have to be typed into by hand on a touchscreen:
@@ -1836,9 +1826,7 @@ class BridgeService : Service() {
                 restartMqtt()
             }
         }
-        runCatching {
-            registerReceiver(debugConfigReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CONFIG"))
-        }
+        registerDebugReceiver(debugConfigReceiver, "com.aeonos.portalha.DEBUG_CONFIG")
 
         // Debug: open a settings screen from adb. The settings activities are
         // exported=false (nothing else should be able to launch them), so `am start`
@@ -1854,9 +1842,7 @@ class BridgeService : Service() {
                 }.onFailure { Log.w(TAG, "debug: could not open '$name': ${it.message}") }
             }
         }
-        runCatching {
-            registerReceiver(debugScreenReceiver, IntentFilter("com.aeonos.portalha.DEBUG_OPEN_SCREEN"))
-        }
+        registerDebugReceiver(debugScreenReceiver, "com.aeonos.portalha.DEBUG_OPEN_SCREEN")
 
         // Debug: place an outbound Meta call from adb, e.g.:
         //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_PLACE_CALL --es self <selfFbid> --es to <calleeFbid> [--ez video true]
@@ -1869,9 +1855,7 @@ class BridgeService : Service() {
                 PortalCaller.placeCall(this@BridgeService, self, to, video)
             }
         }
-        runCatching {
-            registerReceiver(debugCallReceiver, IntentFilter("com.aeonos.portalha.DEBUG_PLACE_CALL"))
-        }
+        registerDebugReceiver(debugCallReceiver, "com.aeonos.portalha.DEBUG_PLACE_CALL")
 
         // Debug: exercise the Calls auto-return without waiting the full minutes. The seconds
         // value overrides callReturnMinutes until the next restart; 0 restores the pref.
@@ -1883,9 +1867,7 @@ class BridgeService : Service() {
                 timeoutHandler.post { runCatching { checkCallReturn() } }
             }
         }
-        runCatching {
-            registerReceiver(debugCallReturnReceiver, IntentFilter("com.aeonos.portalha.DEBUG_CALL_RETURN"))
-        }
+        registerDebugReceiver(debugCallReturnReceiver, "com.aeonos.portalha.DEBUG_CALL_RETURN")
 
         // Debug: inject a tap at a screen fraction to verify gesture dispatch / find the spot
         // that dismisses the launcher photo home.
@@ -1899,9 +1881,27 @@ class BridgeService : Service() {
                     ?: Log.w(TAG, "calls: DEBUG_TAP — no accessibility service")
             }
         }
+        registerDebugReceiver(debugTapReceiver, "com.aeonos.portalha.DEBUG_TAP")
+    }
+
+    /**
+     * Register one of the adb-only DEBUG_* hooks above. ★A runtime receiver registered with no
+     * permission is open to EVERY app on the device (Android 9/10 has no NOT_EXPORTED flag), and
+     * these hooks can repoint the MQTT broker and HA URL, place calls, inject taps and raise an
+     * update prompt for any APK URL. Requiring DUMP keeps `adb shell am broadcast` working — the
+     * shell holds it — while ordinary apps can't: it's signature|privileged|development, so a
+     * third-party app only gets it if someone grants it over adb.
+     */
+    private fun registerDebugReceiver(receiver: BroadcastReceiver?, action: String) {
         runCatching {
-            registerReceiver(debugTapReceiver, IntentFilter("com.aeonos.portalha.DEBUG_TAP"))
-        }
+            val filter = IntentFilter(action)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                registerReceiver(receiver, filter, android.Manifest.permission.DUMP, null,
+                    Context.RECEIVER_EXPORTED)
+            else
+                @Suppress("UnspecifiedRegisterReceiverFlag") registerReceiver(
+                    receiver, filter, android.Manifest.permission.DUMP, null)
+        }.onFailure { Log.w(TAG, "debug: couldn't register $action: ${it.message}") }
     }
 
     // ── MQTT loop ─────────────────────────────────────────────────────────────

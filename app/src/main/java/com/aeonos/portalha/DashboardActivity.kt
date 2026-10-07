@@ -134,11 +134,15 @@ class DashboardActivity : AppCompatActivity() {
         // instead of being revalidated. There is no browser UI on this device, so this is
         // the only way to evict it.
         //   adb shell am broadcast -a com.aeonos.portalha.DEBUG_CLEAR_WEB_CACHE
+        // Sender must hold DUMP (the adb shell does; other apps can't) — same gate as the
+        // service's DEBUG_* hooks, so no other app can make the kiosk reload at will.
         val cacheFilter = android.content.IntentFilter(ACTION_CLEAR_WEB_CACHE)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU)
-            registerReceiver(clearCacheReceiver, cacheFilter, android.content.Context.RECEIVER_EXPORTED)
+            registerReceiver(clearCacheReceiver, cacheFilter, android.Manifest.permission.DUMP, null,
+                android.content.Context.RECEIVER_EXPORTED)
         else
-            @Suppress("UnspecifiedRegisterReceiverFlag") registerReceiver(clearCacheReceiver, cacheFilter)
+            @Suppress("UnspecifiedRegisterReceiverFlag") registerReceiver(
+                clearCacheReceiver, cacheFilter, android.Manifest.permission.DUMP, null)
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
