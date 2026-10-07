@@ -4,6 +4,29 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.21.2 — Mirror the camera, share the mic, keep your doorbell app up
+
+**Added**
+- **Mirror Stream.** The camera stream came out mirrored like a selfie on every Portal model,
+  so text in the room read backwards. A new **Mirror Stream** button (Camera settings, under
+  Rotate) and Home Assistant switch flip it the right way round for every viewer — NVRs, phone
+  apps and HA alike. It works at any Rotate setting and switches instantly, without the stream
+  reconnecting. Off by default, so nothing changes until you turn it on.
+- **Coexist with Voice Assistant is now a Home Assistant switch.** If you run another voice
+  satellite (such as Ava) on the Portal, an automation can now hand the microphone back and
+  forth — for example, give it to the camera stream's room audio while you're watching the live
+  view, and back to the satellite afterwards. While the Portal's own Jarvis or Alexa wake word is
+  on, the switch shows as unavailable, because those need the microphone themselves.
+- **"Return to the dashboard when an app opens by itself"** (Display settings, on by default).
+  Turn it off if a Home Assistant automation opens apps for you — a doorbell camera app, say —
+  and you want them to stay on screen instead of the dashboard coming back over them. Alexa
+  announcements are still cleared away either way, so the wake word keeps working.
+
+**Fixed**
+- **The Sound Level sensor no longer disappears** from Home Assistant while Coexist has the
+  microphone. It now shows as unavailable and comes back with readings when the microphone
+  does.
+
 ## v1.21.1 — Music and calls get along
 
 **Fixed**
