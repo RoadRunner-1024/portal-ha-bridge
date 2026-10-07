@@ -2,6 +2,7 @@ package com.aeonos.portalha
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Vibrator
 import android.util.Log
@@ -45,8 +46,15 @@ class HaExternalBridge(
         val cb = callbackName(payload, "externalAuthSetToken")
         val token = prefs.haToken
         webView.post {
-            if (token.isBlank()) authCallback(cb, false, null)
-            else authCallback(cb, true, JSONObject().put("access_token", token).put("expires_in", TOKEN_TTL_S))
+            when {
+                token.isBlank() -> authCallback(cb, false, null)
+                !onHaPage() -> {
+                    Log.w(TAG, "ha-bridge: refused token to non-HA page ${webView.url}")
+                    authCallback(cb, false, null)
+                }
+                else -> authCallback(cb, true,
+                    JSONObject().put("access_token", token).put("expires_in", TOKEN_TTL_S))
+            }
         }
     }
 
@@ -58,6 +66,26 @@ class HaExternalBridge(
 
     private fun callbackName(payload: String, default: String): String =
         runCatching { JSONObject(payload).optString("callback").ifBlank { default } }.getOrDefault(default)
+
+    // ★window.externalApp exists on EVERY page the WebView shows — a link the dashboard follows,
+    // a page whoever controls the network swaps in, a URL changed under us — and the token it
+    // hands out is a full Home Assistant credential. So only answer when the main frame is the
+    // configured HA server. (Replies go to the main frame, so an iframe inside HA can't receive
+    // one.) Main thread only: WebView.getUrl.
+    private fun onHaPage(): Boolean {
+        val page = webView.url?.let(Uri::parse) ?: return false
+        val configured = prefs.haUrl.trim()
+        val ha = Uri.parse(   // same normalisation as DashboardActivity.normalise
+            if (configured.startsWith("http://") || configured.startsWith("https://")) configured
+            else "http://$configured")
+        if (ha.host.isNullOrEmpty() || !page.host.equals(ha.host, ignoreCase = true)) return false
+        if (page.scheme == ha.scheme) return effectivePort(page) == effectivePort(ha)
+        // A reverse proxy upgrading http://host to https://host is still the same server.
+        return ha.scheme == "http" && page.scheme == "https" && ha.port == -1 && page.port == -1
+    }
+
+    private fun effectivePort(u: Uri): Int =
+        if (u.port != -1) u.port else if (u.scheme == "https") 443 else 80
 
     private fun authCallback(cb: String, success: Boolean, data: JSONObject?) {
         if (!cb.matches(Regex("[A-Za-z0-9_]+"))) return   // callback name is always a plain identifier
@@ -77,6 +105,10 @@ class HaExternalBridge(
     }
 
     private fun handle(type: String, id: Int?) {
+        if (!onHaPage()) {
+            Log.w(TAG, "ha-bridge: ignored '$type' from non-HA page ${webView.url}")
+            return
+        }
         when (type) {
             // The only command we advertise that expects a reply.
             "config/get" -> reply(id, JSONObject()
