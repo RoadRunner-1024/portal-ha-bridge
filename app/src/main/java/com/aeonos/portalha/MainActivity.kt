@@ -78,6 +78,9 @@ class MainActivity : AppCompatActivity() {
             prefs.deviceName = etName.text.toString().trim().ifEmpty { "Portal" }
             prefs.haUrl = etHaUrl.text.toString().trim()
             prefs.haToken = etHaToken.text.toString().trim()
+            // Re-trust HA's self-signed certificate on the next load — the way out after
+            // replacing it, which the dashboard otherwise refuses as a changed certificate.
+            prefs.haCertPin = ""
             BridgeService.stop(this)
             BridgeService.start(this)
             updateStatus()
