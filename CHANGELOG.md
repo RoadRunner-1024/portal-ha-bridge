@@ -4,6 +4,28 @@ All notable changes to Portal HA Bridge. Versions are the app `versionName`;
 the in-app updater (Settings → System & Updates) and the provisioner both pull
 the latest GitHub release.
 
+## v1.22.0 — Your apps in the menu, and a way back from anywhere
+
+**Added**
+- **App tiles in the menu.** Swipe in from the left and, under Hold to Announce, there's now an
+  **Apps** section: the apps you choose, as big icons two to a row. Tap **Edit** to pick which
+  apps appear. Anything you open from here stays on screen — the dashboard won't pull itself
+  back over it.
+- **A Calls tile.** First in the list, it takes you straight to the Portal's calling screen —
+  the same way Home Assistant's Calls button does, photo screen skipped, dashboard back after
+  the call. Untick it in **Edit** if you don't want it.
+- **A Home button** in the menu that opens whatever launcher your Portal uses (Immortal, the
+  stock one, or another).
+- **Swipe from the left edge in any app** (Display & Presence, off by default). Turn it on and
+  the left-edge swipe works on top of other apps too: the menu slides in over the app you're
+  in, without leaving it. Tap the dimmed area to go straight back to that app, or **Back to HA
+  Bridge** for the dashboard. A faint handle on the left edge shows where to swipe. It also
+  works over the photo screensaver — only a swipe counts there, so tapping its left side still
+  goes back a photo. It steps aside whenever a call is ringing or connected.
+- **Use as the Portal's home screen** (System & Updates, off by default), for Portals with no
+  other launcher you want: Home and every restart then land on the dashboard. Leave it off if
+  you use Immortal.
+
 ## v1.21.2 — Mirror the camera, share the mic, keep your doorbell app up
 
 **Added**
