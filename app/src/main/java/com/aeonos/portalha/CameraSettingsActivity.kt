@@ -20,6 +20,7 @@ class CameraSettingsActivity : AppCompatActivity() {
     private lateinit var tvMotionSens: TextView
     private lateinit var btnCameraPower: Button
     private lateinit var btnRotate: Button
+    private lateinit var btnMirror: Button
     private lateinit var tvCameraUrl: TextView
 
     // Live-sync the UI when the service changes prefs (HA commands, cascades).
@@ -59,6 +60,7 @@ class CameraSettingsActivity : AppCompatActivity() {
         })
         btnCameraPower = findViewById(R.id.btn_camera_power)
         btnRotate = findViewById(R.id.btn_rotate)
+        btnMirror = findViewById(R.id.btn_mirror)
         tvCameraUrl = findViewById(R.id.tv_camera_url)
 
         findViewById<Button>(R.id.btn_back).setOnClickListener { finish() }
@@ -66,6 +68,12 @@ class CameraSettingsActivity : AppCompatActivity() {
         btnRotate.setOnClickListener {
             prefs.streamRotation = (prefs.streamRotation + 90) % 360
             BridgeService.setRotation(this, prefs.streamRotation)
+            updateUi()
+        }
+
+        btnMirror.setOnClickListener {
+            prefs.streamMirror = !prefs.streamMirror
+            BridgeService.setMirror(this, prefs.streamMirror)
             updateUi()
         }
 
@@ -175,6 +183,10 @@ class CameraSettingsActivity : AppCompatActivity() {
 
         btnRotate.visibility = if (serviceOn) View.VISIBLE else View.GONE
         btnRotate.text = "Rotate Stream (currently ${prefs.streamRotation}°)"
+
+        // Mirroring only exists on the RTSP path (the motion path never leaves the device).
+        btnMirror.visibility = if (serviceOn && prefs.streamEnabled) View.VISIBLE else View.GONE
+        btnMirror.text = "Mirror Stream (currently ${if (prefs.streamMirror) "on" else "off"})"
 
         if (serviceOn && prefs.streamEnabled) {
             val ip = BridgeService.localIp() ?: "<device-ip>"

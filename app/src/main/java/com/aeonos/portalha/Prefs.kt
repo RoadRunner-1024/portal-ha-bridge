@@ -147,6 +147,13 @@ class Prefs(private val context: Context) {
         get() = sp.getInt("stream_rotation", if (android.os.Build.DEVICE.equals("cipher", true)) 90 else 0)
         set(v) = sp.edit().putInt("stream_rotation", v).apply()
 
+    // Mirror the RTSP stream left-right. Users report the stream comes out selfie-mirrored
+    // on both Portal generations; off by default so existing setups (and their viewer-side
+    // scaleX(-1) workarounds) don't suddenly flip.
+    var streamMirror: Boolean
+        get() = sp.getBoolean("stream_mirror", false)
+        set(v) = sp.edit().putBoolean("stream_mirror", v).apply()
+
     // Portal presence — reads Meta's own face-presence detection by tailing
     // logcat (needs READ_LOGS via adb). Published to HA as a binary_sensor.
     var presenceEnabled: Boolean
@@ -320,6 +327,15 @@ class Prefs(private val context: Context) {
     var autoDismissCallScreensaver: Boolean
         get() = sp.getBoolean("auto_dismiss_call_screensaver", true)
         set(v) = sp.edit().putBoolean("auto_dismiss_call_screensaver", v).apply()
+
+    // When an app puts itself in front of the dashboard with nobody touching the screen, bring
+    // the dashboard back once it goes quiet. Off = leave such apps on screen (e.g. an HA
+    // automation that opens a doorbell app via the launcher's REST API). Alexa announcements,
+    // and the Meta launcher kicking to its home screen, are still undone either way: those
+    // are never something anyone asked for, and Alexa in front silences our mic.
+    var reclaimFromOtherApps: Boolean
+        get() = sp.getBoolean("reclaim_from_other_apps", true)
+        set(v) = sp.edit().putBoolean("reclaim_from_other_apps", v).apply()
 
     // Normally presence holds the screen awake — someone is standing there, so blanking would
     // be wrong. On a panel that should go dark on a fixed schedule regardless (a bedroom, or a

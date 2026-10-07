@@ -141,6 +141,13 @@
             android:backgroundTint="#37474F"
             android:layout_marginBottom="12dp" />
 
+        <Button
+            android:id="@+id/btn_mirror"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:backgroundTint="#37474F"
+            android:layout_marginBottom="12dp" />
+
         <TextView
             android:id="@+id/tv_camera_url"
             android:layout_width="match_parent"

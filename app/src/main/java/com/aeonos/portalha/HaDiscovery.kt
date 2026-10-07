@@ -128,10 +128,29 @@ object HaDiscovery {
         "homeassistant/sensor/${deviceId}_sound/config"
 
     fun soundStateTopic(deviceId: String) = "portal/$deviceId/sensor/sound"
+    // "online" while we hold the mic, "offline" while coexist has handed it away — the entity
+    // shows unavailable instead of vanishing from HA every time the mic changes hands.
+    fun soundAvailabilityTopic(deviceId: String) = "portal/$deviceId/sensor/sound/availability"
 
     fun soundConfigPayload(deviceId: String, deviceName: String): String {
         val name = deviceName.escape()
-        return """{"name":"Sound Level","unique_id":"${deviceId}_sound","device":${device(deviceId, name)},"state_topic":"${soundStateTopic(deviceId)}","unit_of_measurement":"%","state_class":"measurement","icon":"mdi:microphone"}"""
+        return """{"name":"Sound Level","unique_id":"${deviceId}_sound","device":${device(deviceId, name)},"state_topic":"${soundStateTopic(deviceId)}","availability_topic":"${soundAvailabilityTopic(deviceId)}","payload_available":"online","payload_not_available":"offline","unit_of_measurement":"%","state_class":"measurement","icon":"mdi:microphone"}"""
+    }
+
+    // ── Coexist-with-voice-assistant switch ───────────────────────────────────
+    // Lets an automation hand the mic between an external satellite (e.g. Ava) and us —
+    // RTSP room audio and the Sound Level sensor only work while we hold it.
+
+    fun coexistDiscoveryTopic(deviceId: String) = "homeassistant/switch/${deviceId}_coexist/config"
+    fun coexistStateTopic(deviceId: String) = "portal/$deviceId/coexist/state"
+    fun coexistCommandTopic(deviceId: String) = "portal/$deviceId/coexist/set"
+    // "offline" while our own wake word (Jarvis/Alexa) holds the mic — coexist can't be turned
+    // on then, so HA greys the switch out instead of it snapping back with no explanation.
+    fun coexistAvailabilityTopic(deviceId: String) = "portal/$deviceId/coexist/availability"
+
+    fun coexistConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Coexist with Voice Assistant","unique_id":"${deviceId}_coexist","device":${device(deviceId, name)},"state_topic":"${coexistStateTopic(deviceId)}","command_topic":"${coexistCommandTopic(deviceId)}","availability_topic":"${coexistAvailabilityTopic(deviceId)}","payload_available":"online","payload_not_available":"offline","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:microphone-message","entity_category":"config"}"""
     }
 
     // ── Mic mute switch ───────────────────────────────────────────────────────
@@ -359,6 +378,17 @@ object HaDiscovery {
         return """{"name":"Camera Streaming","unique_id":"${deviceId}_stream_enable","device":${device(deviceId, name)},"state_topic":"${streamEnableStateTopic(deviceId)}","command_topic":"${streamEnableCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:video"}"""
     }
 
+    // ── Stream mirror switch (left-right flip of the RTSP picture) ────────────
+
+    fun streamMirrorDiscoveryTopic(deviceId: String) = "homeassistant/switch/${deviceId}_stream_mirror/config"
+    fun streamMirrorStateTopic(deviceId: String) = "portal/$deviceId/stream_mirror/state"
+    fun streamMirrorCommandTopic(deviceId: String) = "portal/$deviceId/stream_mirror/set"
+
+    fun streamMirrorConfigPayload(deviceId: String, deviceName: String): String {
+        val name = deviceName.escape()
+        return """{"name":"Mirror Stream","unique_id":"${deviceId}_stream_mirror","device":${device(deviceId, name)},"state_topic":"${streamMirrorStateTopic(deviceId)}","command_topic":"${streamMirrorCommandTopic(deviceId)}","payload_on":"ON","payload_off":"OFF","state_on":"ON","state_off":"OFF","icon":"mdi:flip-horizontal","entity_category":"config"}"""
+    }
+
     // ── Motion binary sensor ──────────────────────────────────────────────────
 
     fun motionDiscoveryTopic(deviceId: String) =
@@ -489,7 +519,9 @@ object HaDiscovery {
         tempOffsetCommandTopic(deviceId),
         dlnaCommandTopic(deviceId),
         sendspinCommandTopic(deviceId),
-        npOverlayCommandTopic(deviceId)
+        npOverlayCommandTopic(deviceId),
+        coexistCommandTopic(deviceId),
+        streamMirrorCommandTopic(deviceId)
     )
 
     // ── Shared helpers ────────────────────────────────────────────────────────

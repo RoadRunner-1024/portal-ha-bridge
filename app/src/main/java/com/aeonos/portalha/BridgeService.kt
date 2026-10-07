@@ -185,6 +185,8 @@ class BridgeService : Service() {
         private const val EXTRA_CAMERA_ON = "camera_on"
         private const val ACTION_SET_ROTATION = "com.aeonos.portalha.SET_ROTATION"
         private const val EXTRA_ROTATION = "rotation"
+        private const val ACTION_SET_MIRROR = "com.aeonos.portalha.SET_MIRROR"
+        private const val EXTRA_MIRROR = "mirror"
         private const val ACTION_ENSURE_CAMERA = "com.aeonos.portalha.ENSURE_CAMERA"
         private const val ACTION_BOOTED = "com.aeonos.portalha.BOOTED"
         private const val ACTION_APPLY_DISPLAY = "com.aeonos.portalha.APPLY_DISPLAY"
@@ -339,6 +341,10 @@ class BridgeService : Service() {
         fun setRotation(context: Context, degrees: Int) =
             context.startForegroundService(Intent(context, BridgeService::class.java)
                 .setAction(ACTION_SET_ROTATION).putExtra(EXTRA_ROTATION, degrees))
+
+        fun setMirror(context: Context, on: Boolean) =
+            context.startForegroundService(Intent(context, BridgeService::class.java)
+                .setAction(ACTION_SET_MIRROR).putExtra(EXTRA_MIRROR, on))
 
         // Re-acquire the camera if it should be on but was evicted (e.g. another
         // app grabbed it while we were backgrounded). Called on activity resume.
@@ -550,6 +556,9 @@ class BridgeService : Service() {
     @Volatile private var foregroundStolenMs = 0L
     @Volatile private var stolenQuietSinceMs = 0L
     @Volatile private var stolenLogged = false
+    // Alexa (falcon) was heard at some point during the current steal — i.e. it's an
+    // announcement, which is always undone even with reclaimFromOtherApps off.
+    @Volatile private var stolenSawAlexa = false
     // When we last took the screen back, and how many steals in a row have landed right on top
     // of one of those returns — see STOLEN_REFLAP_MS.
     @Volatile private var stolenReturnedMs = 0L
@@ -696,6 +705,7 @@ class BridgeService : Service() {
         // (measured — the guard above misses it), so arming is not yet evidence of anything;
         // the first poll says whether this is a real steal, and logs there.
         stolenLogged = false
+        stolenSawAlexa = false
         wakeHandler.removeCallbacks(stolenReturn)
         wakeHandler.postDelayed(stolenReturn, STOLEN_RETURN_GRACE_MS)
     }
@@ -744,8 +754,9 @@ class BridgeService : Service() {
             }
             // Otherwise the usual "is the Portal mid-something real" list, plus Alexa's own
             // voice and mic so an announcement is never cut off half-spoken.
-            val busy = inCall || TvAppActivity.isShowing() || micYieldedForWake ||
-                assistantSpeaking() || assistantRecording() || falconPlaying()
+            val alexa = micYieldedForWake || assistantSpeaking() || falconPlaying()
+            if (alexa) stolenSawAlexa = true
+            val busy = inCall || TvAppActivity.isShowing() || alexa || assistantRecording()
             if (busy) {
                 stolenQuietSinceMs = 0L
                 wakeHandler.postDelayed(this, STOLEN_RETURN_POLL_MS)
@@ -754,6 +765,18 @@ class BridgeService : Service() {
             if (stolenQuietSinceMs == 0L) stolenQuietSinceMs = now
             if (now - stolenQuietSinceMs < stolenQuietHoldMs()) {
                 wakeHandler.postDelayed(this, STOLEN_RETURN_POLL_MS)
+                return
+            }
+            // "Bring the dashboard back over other apps" is off: only undo the two intruders
+            // nobody ever asks for — an Alexa announcement and the Meta launcher's HOME kick
+            // (the latter only recognisable when the accessibility service reports packages).
+            // Anything else was most likely opened on purpose (an automation launching a
+            // doorbell app), so treat it exactly like the user choosing it.
+            if (prefs?.reclaimFromOtherApps == false && !stolenSawAlexa &&
+                foregroundPkg != META_LAUNCHER_PKG) {
+                Log.i(TAG, "dashboard: another app took the front (${foregroundPkg ?: "unknown"}) — leaving it, auto-return over other apps is off")
+                userLeftDashboard = true
+                clearForegroundSteal()
                 return
             }
             Log.i(TAG, "dashboard: front was taken ${now - started}ms ago and has been quiet ${now - stolenQuietSinceMs}ms — coming back")
@@ -1066,6 +1089,14 @@ class BridgeService : Service() {
                 cameraStream?.rotation = deg                    // motion path (live)
                 rtspStreamer?.let { it.rotationOffset = deg; if (it.isStreaming) { it.restart(); noteRtspStarted() } }
                 Log.i(TAG, "manual rotation offset set to $deg deg")
+            }
+        }
+        if (intent?.action == ACTION_SET_MIRROR) {
+            val on = intent.getBooleanExtra(EXTRA_MIRROR, false)
+            commandExecutor.submit {
+                rtspStreamer?.mirror = on   // live, no restart
+                prefs?.let { publishFeatureSwitchStates(it) }
+                Log.i(TAG, "stream mirror set to $on")
             }
         }
         if (intent?.action == ACTION_ENSURE_CAMERA) {
@@ -1995,6 +2026,8 @@ class BridgeService : Service() {
             if (p.cameraServiceEnabled) HaDiscovery.motionSensitivityCommandTopic(p.deviceId) else null,
             if (p.cameraServiceEnabled) HaDiscovery.motionEnableCommandTopic(p.deviceId) else null,
             if (p.cameraServiceEnabled) HaDiscovery.streamEnableCommandTopic(p.deviceId) else null,
+            if (p.cameraServiceEnabled) HaDiscovery.streamMirrorCommandTopic(p.deviceId) else null,
+            HaDiscovery.coexistCommandTopic(p.deviceId),
             HaDiscovery.presenceEnableCommandTopic(p.deviceId),
             HaDiscovery.screenTimeoutCommandTopic(p.deviceId),
             HaDiscovery.screenTimeoutMinsCommandTopic(p.deviceId),
@@ -2028,6 +2061,7 @@ class BridgeService : Service() {
         publishVolumeMuteState(p)
         publishBrightnessState(p)
         publishDisplayStates(p)
+        publishCoexistState(p)
         publishRaw(HaDiscovery.ipStateTopic(p.deviceId), localIp() ?: "unknown", 1, retained = true)
         if (sensorBridge?.hasTemperature == true)
             publishRaw(HaDiscovery.tempOffsetStateTopic(p.deviceId), "%.1f".format(p.tempOffset), 1, retained = true)
@@ -2092,12 +2126,11 @@ class BridgeService : Service() {
 
         pub(HaDiscovery.tapDiscoveryTopic(p.deviceId), HaDiscovery.tapConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.sensitivityDiscoveryTopic(p.deviceId), HaDiscovery.sensitivityConfigPayload(p.deviceId, p.deviceName))
-        // The Sound Level sensor only exists when we hold the mic; in coexist mode the
-        // mic is released, so remove the entity instead of publishing a stale value.
-        if (p.coexistVoiceAssistant)
-            client.publish(HaDiscovery.soundDiscoveryTopic(p.deviceId), emptyRetained())
-        else
-            pub(HaDiscovery.soundDiscoveryTopic(p.deviceId), HaDiscovery.soundConfigPayload(p.deviceId, p.deviceName))
+        // The Sound Level sensor is always discovered; while coexist has the mic handed
+        // away its availability topic says "offline" (see publishCoexistState), so HA shows
+        // it unavailable instead of the entity vanishing and reappearing.
+        pub(HaDiscovery.soundDiscoveryTopic(p.deviceId), HaDiscovery.soundConfigPayload(p.deviceId, p.deviceName))
+        pub(HaDiscovery.coexistDiscoveryTopic(p.deviceId), HaDiscovery.coexistConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.micMuteDiscoveryTopic(p.deviceId), HaDiscovery.micMuteConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.volumeDiscoveryTopic(p.deviceId), HaDiscovery.volumeConfigPayload(p.deviceId, p.deviceName))
         pub(HaDiscovery.volumeMuteDiscoveryTopic(p.deviceId), HaDiscovery.volumeMuteConfigPayload(p.deviceId, p.deviceName))
@@ -2127,10 +2160,12 @@ class BridgeService : Service() {
             pub(HaDiscovery.cameraDiscoveryTopic(p.deviceId), HaDiscovery.cameraConfigPayload(p.deviceId, p.deviceName))
             pub(HaDiscovery.motionEnableDiscoveryTopic(p.deviceId), HaDiscovery.motionEnableConfigPayload(p.deviceId, p.deviceName))
             pub(HaDiscovery.streamEnableDiscoveryTopic(p.deviceId), HaDiscovery.streamEnableConfigPayload(p.deviceId, p.deviceName))
+            pub(HaDiscovery.streamMirrorDiscoveryTopic(p.deviceId), HaDiscovery.streamMirrorConfigPayload(p.deviceId, p.deviceName))
         } else {
             client.publish(HaDiscovery.cameraDiscoveryTopic(p.deviceId), emptyRetained())
             client.publish(HaDiscovery.motionEnableDiscoveryTopic(p.deviceId), emptyRetained())
             client.publish(HaDiscovery.streamEnableDiscoveryTopic(p.deviceId), emptyRetained())
+            client.publish(HaDiscovery.streamMirrorDiscoveryTopic(p.deviceId), emptyRetained())
         }
         if (p.cameraServiceEnabled && p.motionEnabled) {
             pub(HaDiscovery.motionDiscoveryTopic(p.deviceId), HaDiscovery.motionConfigPayload(p.deviceId, p.deviceName))
@@ -2208,7 +2243,44 @@ class BridgeService : Service() {
             HaDiscovery.dlnaCommandTopic(p.deviceId)              -> handleDlnaCommand(payload, p)
             HaDiscovery.sendspinCommandTopic(p.deviceId)          -> handleSendspinCommand(payload, p)
             HaDiscovery.npOverlayCommandTopic(p.deviceId)         -> handleNpOverlayCommand(payload, p)
+            HaDiscovery.coexistCommandTopic(p.deviceId)           -> handleCoexistCommand(payload, p)
+            HaDiscovery.streamMirrorCommandTopic(p.deviceId)      -> handleStreamMirrorCommand(payload, p)
         }
+    }
+
+    // HA hands the mic to/from an external voice satellite. Same rule as the settings UI,
+    // where the Coexist switch is greyed out while our own wake word (Jarvis or Alexa) is on:
+    // refuse rather than silently turning the user's wake word off.
+    private fun handleCoexistCommand(payload: String, p: Prefs) {
+        val on = payload.equals("ON", ignoreCase = true)
+        if (on && (p.wakeWordEnabled || p.alexaWakeEnabled)) {
+            Log.w(TAG, "coexist: HA asked ON but a wake word is enabled — refused")
+            publishCoexistState(p)
+            return
+        }
+        if (on != p.coexistVoiceAssistant) p.coexistVoiceAssistant = on
+        // The same live path the settings switch uses (applyCoexist + wake/presence reconcile).
+        applyDisplaySettings(this)
+        Log.i(TAG, "coexist: HA set coexist=$on")
+    }
+
+    private fun handleStreamMirrorCommand(payload: String, p: Prefs) {
+        val on = payload.equals("ON", ignoreCase = true)
+        if (on != p.streamMirror) p.streamMirror = on
+        commandExecutor.submit { rtspStreamer?.mirror = on }   // live, no restart
+        publishFeatureSwitchStates(p)
+        Log.i(TAG, "stream mirror: HA set $on")
+    }
+
+    private fun coexistActive(p: Prefs) =
+        p.coexistVoiceAssistant && !p.wakeWordEnabled && !p.alexaWakeEnabled
+
+    private fun publishCoexistState(p: Prefs) {
+        val coexist = coexistActive(p)
+        publishRaw(HaDiscovery.coexistStateTopic(p.deviceId), if (coexist) "ON" else "OFF", 1, retained = true)
+        publishRaw(HaDiscovery.soundAvailabilityTopic(p.deviceId), if (coexist) "offline" else "online", 1, retained = true)
+        val wakeHoldsMic = p.wakeWordEnabled || p.alexaWakeEnabled
+        publishRaw(HaDiscovery.coexistAvailabilityTopic(p.deviceId), if (wakeHoldsMic) "offline" else "online", 1, retained = true)
     }
 
     private fun handleDlnaCommand(payload: String, p: Prefs) {
@@ -2382,6 +2454,7 @@ class BridgeService : Service() {
                     it.onStreamDead = { reason -> onRtspStreamDead(reason) }
                 }
                 r.rotationOffset = p.streamRotation
+                r.mirror = p.streamMirror
                 if (!r.isStreaming) {
                     // withAudio taps SoundMonitor's capture (MicTapSource) — the
                     // stream itself never opens the mic, so calls/Alexa/wake word
@@ -2539,12 +2612,12 @@ class BridgeService : Service() {
     }
 
     // Apply the coexist-with-voice-assistant setting live (toggled from settings).
-    // ON  → release the mic: stop SoundMonitor, drop the Sound Level sensor from HA,
+    // ON  → release the mic: stop SoundMonitor, mark the Sound Level sensor unavailable,
     //        and put the intercom on on-demand capture. OFF → reclaim the mic + sensor.
     // Idempotent — the isRunning() guards make repeated apply calls a no-op.
     private fun applyCoexist(p: Prefs) {
         // Our own wake word (Jarvis or Alexa) needs the mic, so it overrides coexist.
-        val coexist = p.coexistVoiceAssistant && !p.wakeWordEnabled && !p.alexaWakeEnabled
+        val coexist = coexistActive(p)
         intercom?.attachSoundMonitor(if (coexist) null else soundMonitor)
         intercom?.setOnDemandCapture(coexist)
         if (coexist) {
@@ -2553,16 +2626,14 @@ class BridgeService : Service() {
                 Log.i(TAG, "coexist: released mic for external voice assistant")
             }
             lastSoundLevel = -1
-            // Can't update the Sound Level sensor without the mic — remove it from HA.
-            publishRaw(HaDiscovery.soundDiscoveryTopic(p.deviceId), "", 1, retained = true)
         } else {
             if (soundMonitor?.isRunning() == false) {
                 soundMonitor?.start()
                 Log.i(TAG, "coexist: off — reclaimed mic for the sound sensor")
             }
-            publishRaw(HaDiscovery.soundDiscoveryTopic(p.deviceId),
-                HaDiscovery.soundConfigPayload(p.deviceId, p.deviceName), 1, retained = true)
         }
+        // Switch state + Sound Level availability (unavailable while the mic is handed away).
+        publishCoexistState(p)
     }
 
     // Wake word matched — fire portal-wake's public handoff broadcast so the assistant
@@ -3991,6 +4062,7 @@ class BridgeService : Service() {
     private fun publishFeatureSwitchStates(p: Prefs) {
         publishRaw(HaDiscovery.motionEnableStateTopic(p.deviceId), if (p.motionEnabled) "ON" else "OFF", 1, retained = true)
         publishRaw(HaDiscovery.streamEnableStateTopic(p.deviceId), if (p.streamEnabled) "ON" else "OFF", 1, retained = true)
+        publishRaw(HaDiscovery.streamMirrorStateTopic(p.deviceId), if (p.streamMirror) "ON" else "OFF", 1, retained = true)
     }
 
     // ── State publishers ──────────────────────────────────────────────────────

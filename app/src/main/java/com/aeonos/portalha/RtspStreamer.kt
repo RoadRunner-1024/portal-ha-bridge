@@ -38,6 +38,15 @@ class RtspStreamer(private val context: Context, private val port: Int = 8554) :
     // BridgeService's OrientationEventListener — keeps the stream upright as the
     // Portal is physically turned (the OS display rotation is locked).
     @Volatile var autoRotation = 0
+    // Left-right mirror of the encoded stream. RootEncoder applies the flip AFTER the
+    // rotation (SizeCalculator.updateMatrix: scale then rotate), so this mirrors the final
+    // upright picture at every rotation. It's a per-frame draw flag, so it applies live —
+    // no restart, clients stay connected.
+    @Volatile var mirror = false
+        set(v) {
+            field = v
+            runCatching { stream?.getGlInterface()?.setIsStreamHorizontalFlip(v) }
+        }
 
     // Both Portal+ models ("aloha" 1st-gen, "cipher" 2nd-gen) have a front camera
     // whose usable cam (Camera 0) reports only 1280x720 + 4:3 sizes but whose true
@@ -117,9 +126,10 @@ class RtspStreamer(private val context: Context, private val port: Int = 8554) :
             // NoAudioSource (NoAudioSource just means no mic is opened, no data fed).
             val audioOk = s.prepareAudio(16000, false, 64_000)
             if (videoOk && audioOk) {
+                s.getGlInterface().setIsStreamHorizontalFlip(mirror)
                 s.startStream()
                 isStreaming = true
-                Log.i(TAG, "RTSP streaming on ${url()} ${encW}x${encH} rot=$rot squash=$squashedFrontCam (audio=$withAudio)")
+                Log.i(TAG, "RTSP streaming on ${url()} ${encW}x${encH} rot=$rot mirror=$mirror squash=$squashedFrontCam (audio=$withAudio)")
                 true
             } else {
                 Log.w(TAG, "RTSP prepare failed (video=$videoOk audio=$audioOk)")
