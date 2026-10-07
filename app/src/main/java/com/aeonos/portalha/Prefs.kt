@@ -340,6 +340,13 @@ class Prefs(private val context: Context) {
         get() = sp.getString("ha_token", "") ?: ""
         set(v) = sp.edit().putString("ha_token", v.trim()).apply()
 
+    // The one self-signed certificate the dashboard accepts, as "host:port|sha256" — pinned
+    // the first time the HA host presents a certificate error. Saving settings clears it, so a
+    // certificate you replaced yourself is trusted again on the next load.
+    var haCertPin: String
+        get() = sp.getString("ha_cert_pin", "") ?: ""
+        set(v) = sp.edit().putString("ha_cert_pin", v).apply()
+
     // Portal-to-Portal intercom: show a floating push-to-talk button over the
     // dashboard (optional — the drawer always has a hold-to-announce button).
     var intercomOverlayEnabled: Boolean

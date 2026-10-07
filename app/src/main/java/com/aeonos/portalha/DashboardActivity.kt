@@ -2,6 +2,8 @@ package com.aeonos.portalha
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
+import android.net.http.SslCertificate
 import android.net.http.SslError
 import android.os.Bundle
 import android.webkit.*
@@ -15,6 +17,7 @@ import android.widget.Button
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import java.security.MessageDigest
 
 class DashboardActivity : AppCompatActivity() {
 
@@ -60,6 +63,10 @@ class DashboardActivity : AppCompatActivity() {
     private lateinit var tvIntercomStatus: TextView
     private lateinit var btnAnnounce: Button
     private var peerIds: List<String?> = listOf(null)
+
+    // Set when HA presented a different certificate from the pinned one, so the explanation
+    // isn't replaced by the generic "Failed to load" placeholder. Cleared on each load.
+    private var certChanged = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -147,11 +154,44 @@ class DashboardActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView, url: String) {
                 view.evaluateJavascript(alwaysVisibleJs(), null)
             }
+            // A self-signed HA is normal on a LAN — but proceeding on EVERY certificate error let
+            // anyone on the network impersonate HA (or any page the dashboard loads) and inject
+            // script into a WebView that hands out the HA token and has camera/mic granted.
+            // Instead: trust-on-first-use for the HA host only. The first certificate it shows is
+            // pinned; the same one is accepted from then on, a different one is refused with an
+            // explanation, and errors from any other host are refused outright.
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-                handler.proceed() // Accept self-signed certs for local HA
+                val host = hostPort(error.url)
+                val fp = fingerprint(error.certificate)
+                val pin = prefs.haCertPin
+                when {
+                    host == null || fp == null || host != hostPort(normalise(prefs.haUrl.trim())) -> {
+                        android.util.Log.w("PortalHA", "webview: refused certificate error " +
+                            "${error.primaryError} for ${error.url}")
+                        handler.cancel()
+                    }
+                    pin.substringBefore('|') != host -> {
+                        prefs.haCertPin = "$host|$fp"
+                        android.util.Log.i("PortalHA", "webview: trusting HA's certificate for $host " +
+                            "on first use (sha256 $fp)")
+                        handler.proceed()
+                    }
+                    pin.substringAfter('|') == fp -> handler.proceed()
+                    else -> {
+                        android.util.Log.w("PortalHA", "webview: HA certificate for $host CHANGED " +
+                            "(pinned ${pin.substringAfter('|')}, got $fp) — refused")
+                        handler.cancel()
+                        certChanged = true
+                        showPlaceholder(
+                            "Home Assistant presented a <b>different security certificate</b> " +
+                            "than before, so the dashboard was not loaded.<br><br>If you replaced " +
+                            "the certificate yourself, swipe in from the <b>left edge</b>, open " +
+                            "<b>Settings</b> and tap <b>Save</b> to trust the new one.")
+                    }
+                }
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) showPlaceholder(
+                if (request.isForMainFrame && !certChanged) showPlaceholder(
                     "Failed to load.<br><br>Swipe in from the <b>left edge</b> to open the menu, " +
                     "then tap <b>Settings</b> to check your Home Assistant URL.")
             }
@@ -360,6 +400,7 @@ class DashboardActivity : AppCompatActivity() {
     }
 
     private fun loadDashboard() {
+        certChanged = false
         val url = prefs.haUrl.trim()
         if (url.isEmpty()) {
             showPlaceholder(
@@ -388,6 +429,25 @@ class DashboardActivity : AppCompatActivity() {
     private fun normalise(url: String) = when {
         url.startsWith("http://") || url.startsWith("https://") -> url
         else -> "http://$url"
+    }
+
+    // "host:port" with the scheme's default port filled in — what a certificate pin is keyed by.
+    private fun hostPort(url: String?): String? {
+        val u = Uri.parse(url ?: return null)
+        val host = u.host?.lowercase() ?: return null
+        val port = if (u.port != -1) u.port else if (u.scheme == "https") 443 else 80
+        return "$host:$port"
+    }
+
+    // SHA-256 of the certificate's DER bytes. SslCertificate only exposes its X509 from API 29;
+    // on the Gen-1 Portal+ (API 28) saveState() is the public route to the same encoding.
+    private fun fingerprint(cert: SslCertificate?): String? {
+        cert ?: return null
+        val der = if (android.os.Build.VERSION.SDK_INT >= 29) cert.x509Certificate?.encoded
+            else SslCertificate.saveState(cert)?.getByteArray("x509-certificate")
+        return der?.let { bytes ->
+            MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        }
     }
 
     /**
