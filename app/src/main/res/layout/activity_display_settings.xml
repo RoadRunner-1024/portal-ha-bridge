@@ -266,6 +266,24 @@
             android:textColor="@color/hint"
             android:layout_marginBottom="20dp" />
 
+        <Switch
+            android:id="@+id/sw_edge_swipe_everywhere"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Swipe from the left edge in any app"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/onSurface"
+            android:paddingVertical="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Keeps the menu's left-edge swipe working on top of other apps and the photo screensaver, so you can always get back here — swipe right from the left edge and the dashboard returns with its menu open. Over other apps a faint handle shows where; it takes a thin strip along their left edge and steps aside during calls. Over the screensaver only a swipe counts, so tapping its left side still goes to the previous photo."
+            android:textSize="12sp"
+            android:textColor="@color/hint"
+            android:layout_marginBottom="20dp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

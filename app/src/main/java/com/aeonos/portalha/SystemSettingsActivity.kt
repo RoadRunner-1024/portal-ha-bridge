@@ -49,6 +49,16 @@ class SystemSettingsActivity : AppCompatActivity() {
             }
         }
 
+        findViewById<Switch>(R.id.sw_home_screen).setOnCheckedChangeListener { _, checked ->
+            if (checked == HomeScreen.isEnabled(this)) return@setOnCheckedChangeListener
+            HomeScreen.setEnabled(this, checked)
+            if (checked) {
+                Toast.makeText(this, "Choose Portal HA Bridge, then \"Always\"", Toast.LENGTH_LONG).show()
+                HomeScreen.requestDefault(this)
+            }
+            updateHomeScreen()
+        }
+
         findViewById<Button>(R.id.btn_sleep).setOnClickListener { ScreenControl.sleep() }
         findViewById<Button>(R.id.btn_wake).setOnClickListener { ScreenControl.wake(this) }
 
@@ -65,6 +75,7 @@ class SystemSettingsActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updatePermStatus()
+        updateHomeScreen()   // the user may be coming back from the home-app chooser
         // Safety net: if a self-update killed us before the install receiver could
         // restore high-contrast text, undo it now (no-op when nothing is pending).
         Updater.restoreInstallerContrast(this)
@@ -90,6 +101,23 @@ class SystemSettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_grant).visibility =
             if (hasCamera && hasRecord && hasWriteSettings && hasOverlay && accessible)
                 View.GONE else View.VISIBLE
+    }
+
+    private fun updateHomeScreen() {
+        val enabled = HomeScreen.isEnabled(this)
+        findViewById<Switch>(R.id.sw_home_screen).isChecked = enabled
+        findViewById<TextView>(R.id.tv_home_screen).text = when {
+            !enabled ->
+                "Make the dashboard the Portal's home screen, so Home and every restart land " +
+                "here — no other launcher needed. Leave this off if you use Immortal or another " +
+                "launcher. Other apps open from the Apps button in the left-edge menu."
+            HomeScreen.isDefault(this) ->
+                "✓ This is the home screen. Turn off to hand Home back to another launcher."
+            else ->
+                "Not the default yet — press Home and choose Portal HA Bridge → Always. If no " +
+                "choice appears, run this from a computer:\n" +
+                "adb shell cmd package set-home-activity $packageName/.HomeLauncher"
+        }
     }
 
     // ── Permission walk ───────────────────────────────────────────────────────

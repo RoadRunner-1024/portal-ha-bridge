@@ -12,12 +12,17 @@
         android:layout_height="match_parent"
         android:background="#000000" />
 
-    <!-- Left drawer (swipe from left edge to open) -->
-    <LinearLayout
+    <!-- Left drawer (swipe from left edge to open). Scrolls, so a long app list still fits. -->
+    <ScrollView
         android:layout_width="260dp"
         android:layout_height="match_parent"
         android:layout_gravity="start"
         android:background="#1A1A2E"
+        android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="28dp">
 
@@ -35,6 +40,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Settings"
+            android:backgroundTint="#3A3A5C"
+            android:layout_marginBottom="12dp" />
+
+        <Button
+            android:id="@+id/btn_home"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Home"
             android:backgroundTint="#3A3A5C"
             android:layout_marginBottom="12dp" />
 
@@ -83,6 +96,48 @@
             android:textSize="11sp"
             android:layout_marginTop="8dp" />
 
+        <!-- App shortcuts: icon tiles for the apps the user picked (HomeScreen) -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#33FFFFFF"
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="20dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="Apps"
+                android:textColor="#AAB0FF"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/btn_edit_apps"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Edit"
+                android:textColor="#AAB0FF"
+                android:textSize="13sp"
+                android:padding="6dp"
+                android:background="?android:attr/selectableItemBackground" />
+        </LinearLayout>
+
+        <GridLayout
+            android:id="@+id/grid_apps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:columnCount="2" />
+
     </LinearLayout>
+
+    </ScrollView>
 
 </androidx.drawerlayout.widget.DrawerLayout>

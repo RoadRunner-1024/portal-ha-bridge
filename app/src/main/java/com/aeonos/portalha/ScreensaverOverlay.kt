@@ -55,6 +55,12 @@ class ScreensaverOverlay(private val context: Context) {
     private var onExit: (() -> Unit)? = null
     @Volatile private var visible = false
 
+    /**
+     * A swipe in from the left edge (the dashboard menu's own gesture). Null = off, and the
+     * edge behaves as plain left-third navigation. Read at touch time, so it can change live.
+     */
+    @Volatile var onEdgeSwipe: (() -> Unit)? = null
+
     /** Photos are on screen right now. */
     val isShowing: Boolean get() = root != null && visible
 
@@ -133,9 +139,27 @@ class ScreensaverOverlay(private val context: Context) {
                 container.addView(wv, FrameLayout.LayoutParams(MATCH, MATCH))
 
                 // Transparent catcher ABOVE the page: added last, so it wins every touch.
+                // A touch that STARTS at the very left edge and travels right is the menu swipe;
+                // everything else — including a plain tap at the edge — is navigation as before.
+                val d = context.resources.displayMetrics.density
+                var downX = 0f
+                var fromEdge = false
+                var swiped = false
                 val catcher = View(context)
                 catcher.setOnTouchListener { v, e ->
-                    if (e.actionMasked == MotionEvent.ACTION_UP) onTap(e.x, v.width)
+                    when (e.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            downX = e.x; swiped = false
+                            fromEdge = onEdgeSwipe != null && e.x <= EDGE_DP * d
+                        }
+                        MotionEvent.ACTION_MOVE ->
+                            if (fromEdge && !swiped && e.x - downX >= SWIPE_DP * d) {
+                                swiped = true
+                                android.util.Log.i(TAG, "screensaver: edge swipe -> menu")
+                                onEdgeSwipe?.invoke()
+                            }
+                        MotionEvent.ACTION_UP -> if (!swiped) onTap(e.x, v.width)
+                    }
                     true
                 }
                 container.addView(catcher, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -243,5 +267,7 @@ class ScreensaverOverlay(private val context: Context) {
         const val TAG = "PortalHA"
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val FADE_MS = 400L
+        const val EDGE_DP = 24     // a menu swipe must start this close to the left edge
+        const val SWIPE_DP = 36    // …and travel this far right
     }
 }

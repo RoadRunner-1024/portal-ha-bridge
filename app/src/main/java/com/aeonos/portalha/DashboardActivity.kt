@@ -21,6 +21,13 @@ class DashboardActivity : AppCompatActivity() {
     companion object {
         @Volatile private var instance: DashboardActivity? = null
 
+        // Open the menu right now — for when the dashboard is already the foreground activity
+        // under an overlay (the photo frame), so no onResume is coming.
+        fun openDrawer() {
+            val a = instance ?: return
+            a.runOnUiThread { a.drawer.openDrawer(androidx.core.view.GravityCompat.START) }
+        }
+
         const val ACTION_CLEAR_WEB_CACHE = "com.aeonos.portalha.DEBUG_CLEAR_WEB_CACHE"
 
         // Per-process latch for the launch-time cache clear in loadDashboard().
@@ -185,6 +192,17 @@ class DashboardActivity : AppCompatActivity() {
             startActivity(Intent(this, MainActivity::class.java))
         }
 
+        // Apps opened from these are marked as the user's own choice (see HomeScreen.launch), so
+        // the steal watchdog leaves them on screen.
+        findViewById<Button>(R.id.btn_home).setOnClickListener {
+            drawer.closeDrawers()
+            HomeScreen.goHome(this)
+        }
+        findViewById<View>(R.id.btn_edit_apps).setOnClickListener {
+            HomeScreen.editShortcuts(this) { refreshAppTiles() }
+        }
+        refreshAppTiles()
+
         findViewById<Button>(R.id.btn_reload).setOnClickListener {
             drawer.closeDrawers()
             loadDashboard()
@@ -202,6 +220,13 @@ class DashboardActivity : AppCompatActivity() {
         if (savedInstanceState == null && prefs.haUrl.isBlank()) {
             startActivity(Intent(this, MainActivity::class.java))
         }
+    }
+
+    // The drawer's app tiles (Calls + pinned apps) — shared with the over-other-apps menu.
+    // With nothing pinned yet, a single "+" tile opens the picker so the feature is discoverable.
+    private fun refreshAppTiles() {
+        AppTiles.fill(findViewById(R.id.grid_apps), beforeLaunch = { drawer.closeDrawers() },
+            onAdd = { HomeScreen.editShortcuts(this) { refreshAppTiles() } })
     }
 
     // Hide the status/navigation bars for a full-screen kiosk view. STICKY so a
@@ -273,6 +298,10 @@ class DashboardActivity : AppCompatActivity() {
         enableImmersive()
         // Floating talk buttons are shown only while the dashboard is in front.
         BridgeService.setDashboardForeground(true)
+        // Home would just land back here when we ARE the home screen — hide it then.
+        findViewById<View>(R.id.btn_home).visibility =
+            if (HomeScreen.isDefault(this)) View.GONE else View.VISIBLE
+        refreshAppTiles()   // a pinned app may have been uninstalled while we were away
         // Re-acquire the camera if another app (e.g. the Portal launcher) took
         // it while we were in the background.
         BridgeService.ensureCamera(this)

@@ -296,6 +296,7 @@ class BridgeService : Service() {
             // from the background, which pauses us with no hint whatsoever — measured).
             else if (!userLeftDashboard) instance?.noteForegroundStolen()
             instance?.reconcileIntercomOverlays()
+            instance?.reconcileEdgeSwipe()
         }
 
         // A touch or key reached the dashboard — restart the photo-frame countdown.
@@ -674,9 +675,10 @@ class BridgeService : Service() {
     // covers every settings screen without each one having to report in.
     @Volatile private var ourActivitiesResumed = 0
     private val ourActivityWatch = object : android.app.Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(a: android.app.Activity) { ourActivitiesResumed++ }
+        override fun onActivityResumed(a: android.app.Activity) { ourActivitiesResumed++; reconcileEdgeSwipe() }
         override fun onActivityPaused(a: android.app.Activity) {
             if (ourActivitiesResumed > 0) ourActivitiesResumed--
+            reconcileEdgeSwipe()
         }
         override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) {}
         override fun onActivityStarted(a: android.app.Activity) {}
@@ -1185,6 +1187,7 @@ class BridgeService : Service() {
                     }
                     reconcileDreamSlot(p)
         reconcileOsTimeout(p)
+                    reconcileEdgeSwipe()
                     lastActivityMs = System.currentTimeMillis()  // give the new timeout a fresh start
                 }.onFailure { Log.w(TAG, "applyDisplaySettings failed: ${it.message}") }
             }
@@ -1241,6 +1244,8 @@ class BridgeService : Service() {
         unmuteAlexaOutput()   // never leave the Portal muted if we stop mid-warm-up
         intercom?.release()
         hideIntercomOverlays()
+        runCatching { edgeSwipe.hide() }
+        runCatching { edgeMenu.hide() }
         instance = null
         cameraStream?.release()
         rtspStreamer?.stop()
@@ -3301,6 +3306,8 @@ class BridgeService : Service() {
             ringing = ringingNow
             Log.i(TAG, "call: ${if (ringingNow) "RINGING — clearing the screen" else "ringing stopped"}")
         }
+        // The edge strip is a touch target over the call UI — off for the whole call.
+        reconcileEdgeSwipe(callActive = ringingNow || now)
         // ★One latch for "a call owns the screen", covering ringing AND connected, rather than
         // clearing on one transition and restoring on another. Split across the two edges it was
         // racy: a call answered just as the ringtone stopped satisfied NEITHER branch — the
@@ -4193,6 +4200,58 @@ class BridgeService : Service() {
     // Show the configured talk buttons only while: the feature is on, this Portal
     // can transmit (not receive-only), AND the dashboard is in front. Otherwise
     // hide them — they don't float over other apps / the home screen.
+    // ── Edge swipe over other apps ────────────────────────────────────────────
+
+    private val edgeSwipe by lazy { EdgeSwipeOverlay(this) { openEdgeMenu() } }
+    private val edgeMenu by lazy {
+        // onClosed is guarded: closing during onDestroy must not re-arm the strip afterwards.
+        EdgeMenuOverlay(this, onDashboard = { returnToDashboardFromMenu() },
+            onClosed = { if (running.get()) reconcileEdgeSwipe() })
+    }
+
+    /**
+     * Up only while the option is on, ANOTHER app is in front (not the dashboard, and not one of
+     * our own settings screens), and no call has the screen. The paused→resumed hop between two
+     * of our screens briefly reads as "nothing of ours", so showing is debounced; hiding is not.
+     */
+    private fun reconcileEdgeSwipe(callActive: Boolean = inCall || ringing) {
+        wakeHandler.removeCallbacks(edgeSwipeShow)
+        val p = prefs
+        // Over the photo frame the gesture is built into the screensaver's own touch handling
+        // (no strip, so its left-third "previous" tap keeps working right up to the edge).
+        screensaver.onEdgeSwipe = if (p?.edgeSwipeEverywhere == true) ({
+            exitScreensaver()
+            DashboardActivity.openDrawer()
+        }) else null
+        val wanted = p != null && p.edgeSwipeEverywhere && !dashboardForeground &&
+            ourActivitiesResumed == 0 && !callActive
+        // The menu goes with the strip: the dashboard came back, or a call took the screen.
+        if (!wanted) edgeMenu.hide()
+        // While the menu is open the strip is redundant — it returns when the menu closes.
+        if (wanted && !edgeMenu.isShowing) wakeHandler.postDelayed(edgeSwipeShow, 400L)
+        else edgeSwipe.hide()
+    }
+
+    private val edgeSwipeShow = Runnable {
+        // Re-check at fire time: one of our screens may have resumed in the meantime.
+        if (prefs?.edgeSwipeEverywhere == true && !dashboardForeground && ourActivitiesResumed == 0 &&
+            !inCall && !ringing && !edgeMenu.isShowing) edgeSwipe.show()
+    }
+
+    // Swiped in from the left over another app: open the menu ON TOP of it. The app stays put —
+    // tap the backdrop to go back to it, or pick Back to HA Bridge / Home / Calls / a tile.
+    private fun openEdgeMenu() {
+        Log.i(TAG, "edge swipe: menu over ${foregroundPkg ?: "another app"}")
+        edgeSwipe.hide()
+        edgeMenu.show()
+    }
+
+    private fun returnToDashboardFromMenu() {
+        Log.i(TAG, "edge menu: back to the dashboard")
+        BridgeService.noteUserInput()
+        bringDashboardToFront()
+    }
+
     private fun reconcileIntercomOverlays() {
         val p = prefs ?: return
         // The wake-handoff cover counts as "dashboard in front": the buttons float above

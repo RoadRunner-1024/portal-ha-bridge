@@ -74,6 +74,14 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- The dashboard drawer's Apps list (HomeScreen.showAppList) needs to see launchable apps. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:label="@string/app_name"
         android:icon="@drawable/ic_launcher"
@@ -90,6 +98,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            Opt-in "use as home screen": the dashboard offered as a HOME app. Disabled until the
+            user turns it on in System & Updates (HomeScreen.setEnabled), so a Portal running
+            Immortal or the stock launcher never sees a new home-app chooser it didn't ask for.
+        -->
+        <activity-alias
+            android:name=".HomeLauncher"
+            android:targetActivity=".DashboardActivity"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".MainActivity"

@@ -333,6 +333,26 @@ class Prefs(private val context: Context) {
     // automation that opens a doorbell app via the launcher's REST API). Alexa announcements,
     // and the Meta launcher kicking to its home screen, are still undone either way: those
     // are never something anyone asked for, and Alexa in front silences our mic.
+    // The dashboard drawer's Apps shortcuts, as "package/activity" component names. Only these
+    // are listed — the user picks them once (HomeScreen.editShortcuts) rather than wading
+    // through every system app on the device.
+    var appShortcuts: Set<String>
+        get() = sp.getStringSet("app_shortcuts", emptySet())!!.toSet()   // copy: never mutate the stored set
+        set(v) = sp.edit().putStringSet("app_shortcuts", v.toSet()).apply()
+
+    // The drawer's Calls tile (opens Meta's calling screen). Shown by default; unticked in the
+    // same Edit list as the app shortcuts.
+    var showCallsTile: Boolean
+        get() = sp.getBoolean("show_calls_tile", true)
+        set(v) = sp.edit().putBoolean("show_calls_tile", v).apply()
+
+    // Keep the dashboard's left-edge swipe available over other apps (EdgeSwipeOverlay):
+    // swipe right from the left edge anywhere to come back with the menu open. Off by default
+    // — it takes a thin strip of the left edge from whatever app is in front.
+    var edgeSwipeEverywhere: Boolean
+        get() = sp.getBoolean("edge_swipe_everywhere", false)
+        set(v) = sp.edit().putBoolean("edge_swipe_everywhere", v).apply()
+
     var reclaimFromOtherApps: Boolean
         get() = sp.getBoolean("reclaim_from_other_apps", true)
         set(v) = sp.edit().putBoolean("reclaim_from_other_apps", v).apply()

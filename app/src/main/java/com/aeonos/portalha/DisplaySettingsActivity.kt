@@ -32,6 +32,7 @@ class DisplaySettingsActivity : AppCompatActivity() {
     private lateinit var swStartOnBoot: Switch
     private lateinit var swClaimDream: Switch
     private lateinit var swReclaimOtherApps: Switch
+    private lateinit var swEdgeSwipe: Switch
 
     // Live-sync the UI when the service changes prefs (HA commands).
     private val prefsListener =
@@ -68,6 +69,7 @@ class DisplaySettingsActivity : AppCompatActivity() {
         swStartOnBoot = findViewById(R.id.sw_start_on_boot)
         swClaimDream = findViewById(R.id.sw_claim_dream)
         swReclaimOtherApps = findViewById(R.id.sw_reclaim_other_apps)
+        swEdgeSwipe = findViewById(R.id.sw_edge_swipe_everywhere)
 
         findViewById<Button>(R.id.btn_back).setOnClickListener { saveMinutes(); finish() }
         findViewById<Button>(R.id.btn_back_bottom).setOnClickListener { saveMinutes(); finish() }
@@ -156,6 +158,13 @@ class DisplaySettingsActivity : AppCompatActivity() {
             updateUi()
         }
 
+        swEdgeSwipe.setOnCheckedChangeListener { _, checked ->
+            if (checked == prefs.edgeSwipeEverywhere) return@setOnCheckedChangeListener
+            prefs.edgeSwipeEverywhere = checked
+            BridgeService.applyDisplaySettings(this)   // shows/hides the strip
+            updateUi()
+        }
+
     }
 
     override fun onResume() {
@@ -195,6 +204,7 @@ class DisplaySettingsActivity : AppCompatActivity() {
         swStartOnBoot.isChecked = prefs.startOnBoot
         swClaimDream.isChecked = prefs.claimDreamSlot
         swReclaimOtherApps.isChecked = prefs.reclaimFromOtherApps
+        swEdgeSwipe.isChecked = prefs.edgeSwipeEverywhere
         swSleepIgnorePresence.isChecked = prefs.screenTimeoutIgnorePresence
         swSleepIgnorePresence.isEnabled = prefs.screenTimeoutEnabled
         swSleepIgnorePresence.alpha = if (prefs.screenTimeoutEnabled) 1f else 0.4f
