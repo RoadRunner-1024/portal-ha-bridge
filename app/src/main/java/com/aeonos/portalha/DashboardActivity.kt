@@ -178,8 +178,25 @@ class DashboardActivity : AppCompatActivity() {
                     val intent =
                         if (url.startsWith("intent:")) Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
                         else Intent(Intent.ACTION_VIEW, request.url)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(intent)
+                    // ★The page writes this intent, but it launches as US — and an app may start
+                    // its own unexported screens (the update prompt takes any APK URL) and pass
+                    // on URI permissions it holds. So a link may never target this app;
+                    // the selector (which would sidestep that check) and grant flags are dropped.
+                    // Other apps' exported screens stay reachable — that's the feature.
+                    intent.selector = null
+                    intent.removeFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                    @Suppress("DEPRECATION")
+                    val target = intent.component?.packageName ?: intent.`package`
+                        ?: packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName
+                    if (target == packageName) {
+                        android.util.Log.w("PortalHA", "Refused link into this app: $url")
+                    } else {
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                    }
                 }.onFailure {
                     android.util.Log.w("PortalHA", "Could not launch $url: ${it.message}")
                 }
