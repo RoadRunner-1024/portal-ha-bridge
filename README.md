@@ -81,6 +81,12 @@ Both do the same thing — **nothing needs to be pre-installed**. The script dow
 | `-Alexa` / `--alexa` | provision **Amazon Alexa** (install + grant + amazon.com/code sign-in) — see [Alexa on your Portal](#alexa-on-your-portal) |
 | `-Serial <id>` / `--serial <id>` | target a specific device when several are attached |
 
+**From the browser:**
+
+[![Get it on OpenPortal](https://openportal.cc/openportal-badge.svg)](https://openportal.cc/apps/com.aeonos.portalha)
+
+[OpenPortal](https://openportal.cc) installs the latest release and runs the same default provisioning over WebUSB from Chrome or Edge, with nothing to install on the computer. The optional switches (`--free-mic`, `--alexa`) still need the script.
+
 > Prefer to build it yourself? See [Building from source](#building-from-source) — the provisioner automatically uses your build output if it finds one.
 >
 > No computer at all? You can install the APK and grant **most** things via the app's own permission prompts — but **screen sleep and Portal presence each need a one-time ADB grant** (`WRITE_SECURE_SETTINGS` and `READ_LOGS`), because Portal blocks them from its UI. See [SETUP.md](SETUP.md).
