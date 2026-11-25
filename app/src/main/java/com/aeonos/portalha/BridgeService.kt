@@ -3905,13 +3905,17 @@ class BridgeService : Service() {
      * timer alone would cover the cameras again the moment it elapsed. [payload] may carry a
      * number of seconds to override the configured default for one press (e.g. publish "300" to
      * hold five minutes); anything else uses [Prefs.screensaverDismissHoldSecs].
+     *
+     * The blank standby dream is ended here too: it has no remote exit of its own, so without this
+     * the button does nothing while the black screen is up.
      */
     private fun dismissScreensaverFromHa(payload: String, p: Prefs) {
         val hold = payload.trim().toIntOrNull()?.coerceIn(0, 3600) ?: p.screensaverDismissHoldSecs
         val wasShowing = screensaver.isShowing
         screensaverHoldUntilMs = System.currentTimeMillis() + hold * 1000L
         exitScreensaver()
-        Log.i(TAG, "screensaver: dismissed by HA (showing=$wasShowing, held ${hold}s)")
+        val dreamWasUp = BlankDreamService.dismiss()
+        Log.i(TAG, "screensaver: dismissed by HA (showing=$wasShowing, held ${hold}s, dream=$dreamWasUp)")
     }
 
     /**
