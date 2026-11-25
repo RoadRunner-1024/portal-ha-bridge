@@ -1,6 +1,8 @@
 package com.aeonos.portalha
 
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.service.dreams.DreamService
 import android.util.Log
 import android.view.View
@@ -30,6 +32,7 @@ class BlankDreamService : DreamService() {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        instance = this
         // Interactive so a tap can dismiss it; not bright, because there is nothing to light up.
         isInteractive = true
         isFullscreen = true
@@ -51,11 +54,26 @@ class BlankDreamService : DreamService() {
     }
 
     override fun onDetachedFromWindow() {
+        instance = null
         Log.i(TAG, "dream: ended")
         super.onDetachedFromWindow()
     }
 
-    private companion object {
-        const val TAG = "PortalHA"
+    companion object {
+        private const val TAG = "PortalHA"
+
+        @Volatile private var instance: BlankDreamService? = null
+
+        /**
+         * End the blank standby screen from outside the dream (HA, a timer, the service). No-op
+         * when no dream is showing. Hops to the main thread because a DreamService may only be
+         * finished from its own looper.
+         */
+        fun dismiss(): Boolean {
+            val svc = instance ?: return false
+            Handler(Looper.getMainLooper()).post { runCatching { svc.finish() } }
+            Log.i(TAG, "dream: dismissed on request")
+            return true
+        }
     }
 }
